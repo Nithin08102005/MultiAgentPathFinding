@@ -312,19 +312,31 @@ bool BasicSystem::congested() const
 	if (simulation_window <= 1 || num_of_drives <= 2)
 		return false;
     int wait_agents = 0;
+    int grid_size = G.size();
+    if (grid_size <= 0) grid_size = 1;
+
     for (int k = 0; k < num_of_drives; k++)
     {
         const auto& path = paths[k];
-        // If agent is idle or servicing at a goal endpoint, it is not in a traffic jam
-        if (goal_locations[k].empty() || path[timestep].location == goal_locations[k].front().first)
+        if (goal_locations[k].empty())
+            continue;
+
+        int curr_loc = path[timestep].location % grid_size;
+        int goal_loc = goal_locations[k].front().first % grid_size;
+
+        // If agent is idle, servicing, or dwelling at a goal endpoint, it is not in a traffic jam
+        if (curr_loc == goal_loc || timestep < goal_locations[k].front().second)
             continue;
 
         int t = 0;
-        while (t < simulation_window && path[timestep].location == path[timestep + t].location &&
+        while (t < simulation_window && (timestep + t) < (int)path.size() &&
+                (path[timestep].location % grid_size) == (path[timestep + t].location % grid_size) &&
                 path[timestep].orientation == path[timestep + t].orientation)
             t++;
-        if (t == simulation_window)
+        if (t == simulation_window) {
             wait_agents++;
+            cout << "[CONGESTION DEBUG t=" << timestep << "] Agent " << k << " waiting at loc=" << curr_loc << " goal_loc=" << goal_loc << " release_t=" << goal_locations[k].front().second << endl;
+        }
     }
     return wait_agents > num_of_drives / 2;  // more than half of drives didn't make progress
 }
@@ -363,8 +375,11 @@ list<tuple<int, int, int>> BasicSystem::move()
                 wait_times++;
             }*/
 
+            int grid_sz = G.size();
+            if (grid_sz <= 0) grid_sz = 1;
+
             // set release time for task_delay upon arrival at goal
-            if (!goal_locations[k].empty() && curr.location == goal_locations[k].front().first)
+            if (!goal_locations[k].empty() && (curr.location % grid_sz) == (goal_locations[k].front().first % grid_sz))
             {
                 if (task_delay > 0 && goal_locations[k].front().second == 0)
                 {
@@ -373,12 +388,12 @@ list<tuple<int, int, int>> BasicSystem::move()
             }
 
             // remove goals if necessary
-            if ((!hold_endpoints || paths[k].size() == t + 1) && !goal_locations[k].empty() && 
-				curr.location == goal_locations[k].front().first &&
+            if (!goal_locations[k].empty() && 
+				(curr.location % grid_sz) == (goal_locations[k].front().first % grid_sz) &&
 				curr.timestep >= goal_locations[k].front().second) // the agent finish its current task
             {
                 goal_locations[k].erase(goal_locations[k].begin());
-				finished_tasks.emplace_back(k, curr.location, t);
+				finished_tasks.emplace_back(k, curr.location % grid_sz, t);
             }
 
             // check whether the move is valid
@@ -755,17 +770,20 @@ void BasicSystem::solve()
 			 }
 			 else
 			 {
-				 vector<Path> fallback_paths(num_of_drives);
-				 for (int i = 0; i < num_of_drives; i++)
+				 std::cout << "[WARN t=" << timestep << "] PBS failed to find complete solution; invoking WHCA*/LRA* fallback." << std::endl;
+				 vector<Path> planned_paths(num_of_drives);
+				 bool whca_sol = solve_by_WHCA(planned_paths, starts, goal_locations);
+				 if (whca_sol)
 				 {
-					 fallback_paths[i].resize(simulation_window + 1);
-					 for (int t = 0; t <= simulation_window; t++)
-					 {
-						 fallback_paths[i][t] = State(starts[i].location, t, starts[i].orientation);
-					 }
+					 update_paths(planned_paths);
+					 if (g_crash_log) { (*g_crash_log) << "  solve t=" << timestep << " update_paths (WHCA) OK" << std::endl; g_crash_log->flush(); }
 				 }
-				 update_paths(fallback_paths);
-				 if (g_crash_log) { (*g_crash_log) << "  solve t=" << timestep << " update_paths (fallback) OK" << std::endl; g_crash_log->flush(); }
+				 else
+				 {
+					 lra.resolve_conflicts(planned_paths);
+					 update_paths(planned_paths);
+					 if (g_crash_log) { (*g_crash_log) << "  solve t=" << timestep << " update_paths (LRA) OK" << std::endl; g_crash_log->flush(); }
+				 }
 			 }
 		 }
 		 if (log)
@@ -802,8 +820,15 @@ bool BasicSystem::solve_by_WHCA(vector<Path>& planned_paths,
         else
         {
             whca.initial_solution.clear();
-            for (auto agent : new_agents)
-                whca.initial_solution.emplace_back(planned_paths[agent]); // hold old paths
+            if ((int)new_starts.size() == num_of_drives)
+            {
+                whca.initial_solution = planned_paths;
+            }
+            else
+            {
+                for (auto agent : new_agents)
+                    whca.initial_solution.emplace_back(planned_paths[agent]); // hold old paths
+            }
         }
     }
 	bool sol = false;
@@ -820,11 +845,18 @@ bool BasicSystem::solve_by_WHCA(vector<Path>& planned_paths,
 		+ std::to_string(num_of_drives) + "," + std::to_string(seed));
     if (sol)
     {
-        auto pt = whca.solution.begin();
-        for (int i : new_agents)
+        if ((int)new_starts.size() == num_of_drives)
         {
-            planned_paths[i] = *pt;
-            ++pt;
+            planned_paths = whca.solution;
+        }
+        else
+        {
+            auto pt = whca.solution.begin();
+            for (int i : new_agents)
+            {
+                planned_paths[i] = *pt;
+                ++pt;
+            }
         }
     }
 	whca.clear();

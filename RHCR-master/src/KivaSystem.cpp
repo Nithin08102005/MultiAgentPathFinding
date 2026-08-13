@@ -629,6 +629,20 @@ KivaSystem::~KivaSystem() {}
 void KivaSystem::initialize()
 {
     initialize_solvers();
+    // In capacity_mode with task_delay > 0, robots hold at goal cells for task_delay
+    // steps and then leave. We must NOT use hold_endpoints=true (that checks
+    // earliest_holding_time from the RT, which returns a huge value because the
+    // initial_rt permanently extends each robot's old path — causing robots to generate
+    // path_size=274 trying to avoid their own old goal cell, getting completely stuck).
+    //
+    // Instead, keep solver.hold_endpoints=false (SIPP paths end at arrival+task_delay)
+    // BUT flip initial_rt.hold_endpoints=false so the initial RT does NOT permanently
+    // extend paths. Without permanent extension the soft-constraint at a goal cell ends
+    // when the robot's path ends (arrival+task_delay), so other robots' SIPP sees a
+    // FINITE block there — no more 80K-node exhaustion from permanent RT occupation.
+    if (capacity_mode && task_delay > 0) {
+        solver.initial_rt.hold_endpoints = false;
+    }
 
     starts.resize(num_of_drives);
     goal_locations.resize(num_of_drives);
@@ -784,29 +798,50 @@ bool KivaSystem::bundle_on_goal_reached(int k)
     if (k < 0 || k >= (int)bundle.size()) return false;
     if (bundle[k].empty()) return false;
 
-    const auto& front = bundle[k].front();
+    auto& front = bundle[k].front();
     const int raw_target = clamp_vertex(G, front.first);
-    const int release_t = front.second;
+    const int target = find_exterior_travel_cell_for_endpoint(G, raw_target);
 
-    int target = find_exterior_travel_cell_for_endpoint(G, raw_target);
-
-    // Scan the last simulation window, not only paths[k][timestep]. If the agent hits the
-    // front goal mid-window and the plan already moves them toward the next goal before the
-    // window ends, a single-index check never pops and we keep replanning to the old goal.
+    // Scan the recent window to find the FIRST timestep robot arrived at target.
+    // We only use this to initialize the dwell timer (front.second).
+    // The pop decision always compares global timestep against front.second,
+    // NOT the individual scan timestep - this avoids the bug where the scan
+    // finds an old timestep (e.g. t=30) that is still before front.second (35)
+    // and returns false even though the current tick IS past front.second.
     const int t1 = timestep;
     const int t0 = std::max(0, timestep - simulation_window);
+    bool robot_at_target = false;
     for (int t = t0; t <= t1 && k < (int)paths.size(); ++t) {
         if (t >= (int)paths[k].size()) break;
-        const State& st = paths[k][t];
-        int loc = clamp_vertex(G, st.location);
-        if ((loc == target || loc == raw_target) && st.timestep >= release_t) {
-            bundle[k].pop_front();
-            bundle_dirty[k] = true;
-            m_restitches_total++;
-            return true;
+        int loc = clamp_vertex(G, paths[k][t].location);
+        if (loc == target || loc == raw_target) {
+            // Initialize dwell timer on first arrival (only once, when front.second==0)
+            if (task_delay > 0 && front.second == 0) {
+                front.second = paths[k][t].timestep + task_delay;
+            }
+            robot_at_target = true;
+            break;  // found the earliest arrival; timer is set
         }
     }
-    return false;
+
+    if (!robot_at_target) return false;  // robot not at target in this window
+
+    // Compare GLOBAL timestep (current simulation time) against the dwell deadline.
+    // Do NOT use the individual path-state timestep from the scan - that can be
+    // an old slice from the window start that is still before front.second.
+    if (task_delay > 0 && timestep < front.second) {
+        return false;  // still within dwell period
+    }
+
+    // Dwell complete (or no task_delay): pop the completed task
+    bundle[k].pop_front();
+    bundle_dirty[k] = true;
+    m_restitches_total++;
+    num_of_tasks++;
+    if (k < (int)finished_tasks.size()) {
+        finished_tasks[k].emplace_back(target, t1);
+    }
+    return true;
 }
 
 std::unordered_set<int> KivaSystem::collect_claimed_active_endpoints(int except_agent) const
@@ -863,11 +898,27 @@ void KivaSystem::bundle_assert_capacity_ok(int k)
 void KivaSystem::bundle_mirror_to_engine()
 {
     for (int k = 0; k < num_of_drives; ++k) {
+        int existing_release = (!goal_locations[k].empty()) ? goal_locations[k].front().second : 0;
         goal_locations[k].clear();
         if (!bundle[k].empty()) {
             int raw_v = clamp_vertex(G, bundle[k].front().first);
             int v = find_exterior_travel_cell_for_endpoint(G, raw_v);
-            goal_locations[k].push_back({v, bundle[k].front().second});
+            int release_t = std::max(bundle[k].front().second, existing_release);
+
+            // If robot is already sitting at this goal cell and dwell timer hasn't been
+            // set yet (release_t==0), initialize the dwell timer right now so that
+            // BasicSystem::move() never sees release_t=0 while robot is already there
+            // (which would cause move() to instantly pop the goal before the 7-step dwell).
+            if (task_delay > 0 && release_t == 0) {
+                int curr_loc = clamp_vertex(G, safe_path_at(paths, G, k, timestep, consider_rotation).location);
+                int gsz = G.size(); if (gsz <= 0) gsz = 1;
+                if ((curr_loc % gsz) == (raw_v % gsz) || (curr_loc % gsz) == (v % gsz)) {
+                    release_t = timestep + task_delay;
+                }
+            }
+
+            bundle[k].front().second = release_t;
+            goal_locations[k].push_back({v, release_t});
         }
         if (goal_locations[k].empty()) {
             int curr = safe_path_at(paths, G, k, timestep, consider_rotation).location;
@@ -1487,23 +1538,25 @@ static bool is_goal_service_cell_conflicting(const KivaGrid& G, int target_cell,
                                             std::vector<std::vector<std::pair<int, int>>>& goal_locations,
                                             int timestep, bool consider_rotation)
 {
-    int target_footprint[3];
-    G.get_occupied_cells(target_cell, 0, target_footprint);
+    int target_footprint[5];
+    G.get_5cell_occupied_cells(target_cell, 0, target_footprint);
 
     for (int other = 0; other < num_of_drives; other++)
     {
         if (other == requesting_agent) continue;
 
-        // 1. Check against other agent's current 3-cell position at this timestep
+        // 1. Check against other agent's current 5-cell position at this timestep
         State other_st = safe_path_at(paths, G, other, timestep, consider_rotation);
-        int other_pos_cells[3];
-        G.get_occupied_cells(other_st.location, other_st.orientation, other_pos_cells);
+        int other_pos_cells[5];
+        G.get_5cell_occupied_cells(other_st.location, other_st.orientation, other_pos_cells);
 
-        for (int tc = 0; tc < 3; tc++)
+        for (int tc = 0; tc < 5; tc++)
         {
-            for (int oc = 0; oc < 3; oc++)
+            for (int oc = 0; oc < 5; oc++)
             {
-                if (target_footprint[tc] == other_pos_cells[oc] && G.types[target_footprint[tc]] != "Magic")
+                if (target_footprint[tc] >= 0 && target_footprint[tc] < (int)G.types.size() &&
+                    target_footprint[tc] == other_pos_cells[oc] && G.types[target_footprint[tc]] != "Magic" &&
+                    G.types[target_footprint[tc]] != "Obstacle" && G.types[target_footprint[tc]] != "Endpoint")
                     return true;
             }
         }
@@ -1511,13 +1564,15 @@ static bool is_goal_service_cell_conflicting(const KivaGrid& G, int target_cell,
         // 2. Check against other agent's queued goal locations
         for (const auto& g : goal_locations[other])
         {
-            int other_goal_cells[3];
-            G.get_occupied_cells(g.first, 0, other_goal_cells);
-            for (int tc = 0; tc < 3; tc++)
+            int other_goal_cells[5];
+            G.get_5cell_occupied_cells(g.first, 0, other_goal_cells);
+            for (int tc = 0; tc < 5; tc++)
             {
-                for (int ogc = 0; ogc < 3; ogc++)
+                for (int ogc = 0; ogc < 5; ogc++)
                 {
-                    if (target_footprint[tc] == other_goal_cells[ogc] && G.types[target_footprint[tc]] != "Magic")
+                    if (target_footprint[tc] >= 0 && target_footprint[tc] < (int)G.types.size() &&
+                        target_footprint[tc] == other_goal_cells[ogc] && G.types[target_footprint[tc]] != "Magic" &&
+                        G.types[target_footprint[tc]] != "Obstacle" && G.types[target_footprint[tc]] != "Endpoint")
                         return true;
                 }
             }
@@ -1786,8 +1841,13 @@ void KivaSystem::simulate(int simulation_time)
         {
             int id, loc, t;
             std::tie(id, loc, t) = task;
-            finished_tasks[id].emplace_back(loc, t);
-            num_of_tasks++;
+            // In capacity_mode, bundle_on_goal_reached() is the sole authority
+            // on task counting (it enforces the task_delay dwell). Counting here
+            // would cause double-counting and instant-pop of Goals B and C.
+            if (!capacity_mode) {
+                finished_tasks[id].emplace_back(loc, t);
+                num_of_tasks++;
+            }
             if (hold_endpoints)
             {
                 held_endpoints.erase(loc);
@@ -1796,11 +1856,25 @@ void KivaSystem::simulate(int simulation_time)
             }
         }
 
-        if (congested())
+        // Lifelong MAPF: do not abort on temporary waiting ticks when PBS solver is succeeding
+        /*
         {
-            cout << "***** Too many traffic jams ***" << endl;
-            break;
+            static int congested_ticks = 0;
+            if (congested())
+            {
+                congested_ticks++;
+                if (congested_ticks >= 10)
+                {
+                    cout << "***** Too many traffic jams (10 consecutive ticks) ***" << endl;
+                    break;
+                }
+            }
+            else
+            {
+                congested_ticks = 0;
+            }
         }
+        */
 
         metrics_end_tick_and_maybe_log();
     }

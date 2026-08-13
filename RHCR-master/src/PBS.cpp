@@ -108,29 +108,9 @@ void PBS::find_conflicts(list<Conflict>& conflicts, int a1, int a2)
         State s2 = (timestep < size2) ? paths[a2]->at(timestep) : paths[a2]->back();
 
         int c1[5], c2[5];
-        int num_c1 = 3, num_c2 = 3;
-
-        if (a1_parked)
-        {
-            G.get_occupied_cells(s1.location, s1.orientation, c1);
-            num_c1 = 3;
-        }
-        else
-        {
-            G.get_5cell_occupied_cells(s1.location, s1.orientation, c1);
-            num_c1 = 5;
-        }
-
-        if (a2_parked)
-        {
-            G.get_occupied_cells(s2.location, s2.orientation, c2);
-            num_c2 = 3;
-        }
-        else
-        {
-            G.get_5cell_occupied_cells(s2.location, s2.orientation, c2);
-            num_c2 = 5;
-        }
+        int num_c1 = 5, num_c2 = 5;
+        G.get_5cell_occupied_cells(s1.location, s1.orientation, c1);
+        G.get_5cell_occupied_cells(s2.location, s2.orientation, c2);
 
         // Check vertex / footprint overlap across active footprints
         for (int i = 0; i < num_c1; i++)
@@ -755,6 +735,7 @@ bool PBS::run(const vector<State>& starts,
 	    resolve_conflict(curr->conflict, n[0], n[1]);
 
         vector<Path*> copy(paths);
+        PBSNode* valid_children[2] = {nullptr, nullptr};
         for (int child_idx = 0; child_idx < 2; child_idx++)
         {
             auto i = n[child_idx];
@@ -764,24 +745,38 @@ bool PBS::run(const vector<State>& starts,
             {
                 HL_num_generated++;
                 i->time_generated = HL_num_generated;
+                valid_children[child_idx] = i;
             }
-            if (sol)
+            else
             {
-                if (i->num_of_collisions == 0) //no conflicts
-                {
-                    solution_found = true;
-                    solution_cost = i->g_val;
-                    best_node = i;
-                    allNodes_table.push_back(i);
-                    break;
-                }
+                delete i;
+                n[child_idx] = nullptr;
             }
-		    else
-		    {
-			    delete i;
-			    n[child_idx] = nullptr;
-		    }
-		    paths = copy;
+            paths = copy;
+        }
+
+        if (valid_children[0] != nullptr && valid_children[0]->num_of_collisions == 0 &&
+            valid_children[1] != nullptr && valid_children[1]->num_of_collisions == 0)
+        {
+            PBSNode* winner = (valid_children[1]->g_val < valid_children[0]->g_val) ? valid_children[1] : valid_children[0];
+            solution_found = true;
+            solution_cost = winner->g_val;
+            best_node = winner;
+            allNodes_table.push_back(winner);
+        }
+        else if (valid_children[0] != nullptr && valid_children[0]->num_of_collisions == 0)
+        {
+            solution_found = true;
+            solution_cost = valid_children[0]->g_val;
+            best_node = valid_children[0];
+            allNodes_table.push_back(valid_children[0]);
+        }
+        else if (valid_children[1] != nullptr && valid_children[1]->num_of_collisions == 0)
+        {
+            solution_found = true;
+            solution_cost = valid_children[1]->g_val;
+            best_node = valid_children[1];
+            allNodes_table.push_back(valid_children[1]);
         }
 
         if (!solution_found)

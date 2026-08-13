@@ -74,25 +74,9 @@ Path SIPP::run(const BasicGraph& G, const State& start,
     Interval interval = rt.getFirstSafeInterval(start.location);
     if (g_crash_log) { (*g_crash_log) << "        [SIPP::run] getFirstSafeInterval done" << std::endl; g_crash_log->flush(); }
 	
-    if (std::get<0>(interval) == 0)
     {
-        auto node = new SIPPNode(start, 0, h_val, interval, nullptr, 0);
-        num_generated++;
-        node->open_handle = open_list.push(node);
-        node->in_openlist = true;
-        allNodes_table.insert(node);
-        min_f_val = node->getFVal();
-        focal_bound = std::max(min_f_val * suboptimal_bound, min_f_val + 5);
-        node->focal_handle = focal_list.push(node);
-        node->in_focallist = true;
-    }
-    else if(prioritize_start) // the agent has the highest priority at its start location
-    {
-        // This is correct only when k_robust <= 1. Otherwise, agents might not be able to
-        // wait at its start locations due to initial constraints caused by the previous actions
-        // of other agents.
-        Interval interval = make_tuple(0, INTERVAL_MAX, 0);
-        auto node = new SIPPNode(start, 0, h_val, interval, nullptr, 0);
+        Interval init_interval = (std::get<0>(interval) == 0) ? interval : std::make_tuple(0, INTERVAL_MAX, false);
+        auto node = new SIPPNode(start, 0, h_val, init_interval, nullptr, 0);
         num_generated++;
         node->open_handle = open_list.push(node);
         node->in_openlist = true;
@@ -106,7 +90,7 @@ Path SIPP::run(const BasicGraph& G, const State& start,
 	if (hold_endpoints && !goal_location.empty())
 		earliest_holding_time = rt.getHoldingTimeFromSIT(goal_location.back().first);
     if (g_crash_log) { (*g_crash_log) << "        [SIPP::run] entering search loop" << std::endl; g_crash_log->flush(); }
-    while (!focal_list.empty() && num_expanded < 30000)
+    while (!focal_list.empty() && num_expanded < 80000)
     {
         SIPPNode* curr = focal_list.top(); focal_list.pop();
         curr->in_focallist = false;
@@ -154,8 +138,6 @@ Path SIPP::run(const BasicGraph& G, const State& start,
                 degree = 0;
             else
                 degree = G.get_rotate_degree(curr->state.orientation, orientation);
-            if (degree == 2) // 180-degree turn is redundant — backward reverse movement handles this 3x faster with 0 turn delay
-                continue;
             if (degree > std::get<1>(curr->interval) - curr->state.timestep) // don't have enough time to turn
                 continue;
             int location = curr->state.location + G.move[orientation];
@@ -297,9 +279,9 @@ Path SIPP::run(const BasicGraph& G, const State& start,
 
     }  // end while loop
 
-    if (num_expanded >= 50000)
+    if (num_expanded >= 5000)
     {
-        std::cout << "[DEBUG SIPP EXPANDED LIMIT] SIPP hit 50,000 node expansion limit for start=" << start.location 
+        std::cout << "[DEBUG SIPP EXPANDED LIMIT] SIPP hit 5,000 node expansion limit for start=" << start.location 
                   << " (r=" << start.location/G.cols << ",c=" << start.location%G.cols << ") goal=" << goal_location.back().first << std::endl;
     }
 
