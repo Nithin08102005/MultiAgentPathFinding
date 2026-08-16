@@ -162,11 +162,21 @@ void LRAStar::resolve_conflicts(const vector<Path>& input_paths)
     curr_locations.clear();
     for (int k = 0; k < num_of_agents; k++)
     {
-		// solution[k].reserve(window + 1);
-		solution[k].push_back(input_paths[k][0]);
-        if (k_robust == 1)
-            curr_locations[input_paths[k][0].location] = k;
-
+		if (!input_paths[k].empty())
+		{
+			solution[k].push_back(input_paths[k][0]);
+			int c5[5];
+			G.get_5cell_occupied_cells(input_paths[k][0].location, input_paths[k][0].orientation, c5);
+			for (int c = 0; c < 5; c++)
+			{
+				if (c5[c] >= 0 && c5[c] < G.size() && G.types[c5[c]] != "Obstacle" && G.types[c5[c]] != "Endpoint")
+					curr_locations[c5[c]] = k;
+			}
+		}
+		else
+		{
+			solution[k].push_back(State(0, 0, 0));
+		}
     }
 
     for (int t = 1; t <= simulation_window; t++)
@@ -180,44 +190,65 @@ void LRAStar::resolve_conflicts(const vector<Path>& input_paths)
         std::random_shuffle(agents_list.begin(), agents_list.end());
         for (auto agent : agents_list)
         {
+			if (input_paths[agent].empty())
+			{
+				int prev_loc = solution[agent].empty() ? 0 : solution[agent].back().location;
+				int prev_ori = solution[agent].empty() ? 0 : solution[agent].back().orientation;
+				solution[agent].emplace_back(prev_loc, t, prev_ori);
+				continue;
+			}
 			if (path_pointers[agent] >= (int) input_paths[agent].size())
 			{
 				path_pointers[agent] = (int) input_paths[agent].size() - 1;
 			}
             int loc = input_paths[agent][path_pointers[agent]].location;
             int orientation = input_paths[agent][path_pointers[agent]].orientation;
-            if (loc == solution[agent][t - 1].location)
-            { // The agent wait or rotates at its current location
-				solution[agent].emplace_back(loc, t, orientation);
-                path_pointers[agent]++;
-                auto other = next_locations.find(loc); // conflict with other agent
-                if (other != next_locations.end())
+
+            int target_cells[5];
+            G.get_5cell_occupied_cells(loc, orientation, target_cells);
+
+            bool conflict_curr = false;
+            bool conflict_next = false;
+            for (int c = 0; c < 5; c++)
+            {
+                int cell = target_cells[c];
+                if (cell < 0 || cell >= G.size() || G.types[cell] == "Obstacle" || G.types[cell] == "Endpoint")
+                    continue;
+                auto it_curr = curr_locations.find(cell);
+                if (it_curr != curr_locations.end() && it_curr->second != agent)
                 {
-                    wait_command(other->second, t, path_pointers); // Other agent has to wait
-                    path_pointers[other->second]--;
+                    conflict_curr = true;
+                    break;
+                }
+                auto it_next = next_locations.find(cell);
+                if (it_next != next_locations.end() && it_next->second != agent)
+                {
+                    conflict_next = true;
+                    break;
                 }
             }
-            else if (curr_locations.find(loc) != curr_locations.end())
-            { // The agent cannot move because its next location is occupied currently
+
+            if (conflict_curr || conflict_next)
+            {
+                // Must wait at previous location to maintain 5-cell safety buffer
                 wait_command(agent, t, path_pointers);
             }
-            else // The agent wants to move to a location that is currently empty
+            else
             {
-                auto other = next_locations.find(loc);
-                if (other == next_locations.end())
-                { // No other agents want to go to this location yet
-					solution[agent].emplace_back(loc, t, orientation);
-                    path_pointers[agent]++;
-                }
-                else
-                { // Another agent also wants to go to this location, for now we just force this agent to wait
-                    wait_command(agent, t, path_pointers);
+                // Safe to move
+                solution[agent].emplace_back(loc, t, orientation);
+                path_pointers[agent]++;
+                for (int c = 0; c < 5; c++)
+                {
+                    int cell = target_cells[c];
+                    if (cell >= 0 && cell < G.size() && G.types[cell] != "Obstacle" && G.types[cell] != "Endpoint")
+                    {
+                        next_locations[cell] = agent;
+                    }
                 }
             }
-            next_locations[solution[agent][t].location] = agent;
         }
-        if (k_robust == 1)
-            curr_locations = next_locations;
+        curr_locations = next_locations;
     }
     print_results();
 }
@@ -226,23 +257,25 @@ void LRAStar::resolve_conflicts(const vector<Path>& input_paths)
 void LRAStar::wait_command(int agent, int timestep,
         vector<list<pair<int, int> >::const_iterator >& traj_pointers)
 {
-    int location = solution[agent][timestep - 1].location;
+    State prev_s = solution[agent][timestep - 1];
+    State wait_s(prev_s.location, timestep, prev_s.orientation);
     if ((int)solution[agent].size() == timestep)
     {
-		solution[agent].push_back(solution[agent][timestep - 1]);
+		solution[agent].push_back(wait_s);
     }
     else
     {
-		solution[agent][timestep] = solution[agent][timestep - 1];
+		solution[agent][timestep] = wait_s;
     }
-	solution[agent][timestep].timestep = timestep;
-    auto other = next_locations.find(location); // whether conflict with other agent
-    if (other != next_locations.end())
+    int c5[5];
+    G.get_5cell_occupied_cells(wait_s.location, wait_s.orientation, c5);
+    for (int c = 0; c < 5; c++)
     {
-        wait_command(other->second, timestep, traj_pointers); // Other agent has to wait
-        --traj_pointers[other->second];
+        if (c5[c] >= 0 && c5[c] < G.size() && G.types[c5[c]] != "Obstacle" && G.types[c5[c]] != "Endpoint")
+        {
+            next_locations[c5[c]] = agent;
+        }
     }
-    next_locations[location] = agent;
     num_wait_commands++;
 }
 
@@ -250,23 +283,25 @@ void LRAStar::wait_command(int agent, int timestep,
 void LRAStar::wait_command(int agent, int timestep,
                            vector<int>& path_pointers)
 {
-    int location = solution[agent][timestep - 1].location;
+    State prev_s = solution[agent][timestep - 1];
+    State wait_s(prev_s.location, timestep, prev_s.orientation);
     if ((int)solution[agent].size() == timestep)
     {
-		solution[agent].push_back(solution[agent][timestep - 1]);
+		solution[agent].push_back(wait_s);
     }
     else
     {
-		solution[agent][timestep] = solution[agent][timestep - 1];
+		solution[agent][timestep] = wait_s;
     }
-	solution[agent][timestep].timestep = timestep;
-    auto other = next_locations.find(location); // whether conflict with other agent
-    if (other != next_locations.end())
+    int c5[5];
+    G.get_5cell_occupied_cells(wait_s.location, wait_s.orientation, c5);
+    for (int c = 0; c < 5; c++)
     {
-        wait_command(other->second, timestep, path_pointers); // Other agent has to wait
-        path_pointers[other->second]--;
+        if (c5[c] >= 0 && c5[c] < G.size() && G.types[c5[c]] != "Obstacle" && G.types[c5[c]] != "Endpoint")
+        {
+            next_locations[c5[c]] = agent;
+        }
     }
-    next_locations[location] = agent;
     num_wait_commands++;
 }
 

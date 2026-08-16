@@ -898,12 +898,11 @@ void KivaSystem::bundle_assert_capacity_ok(int k)
 void KivaSystem::bundle_mirror_to_engine()
 {
     for (int k = 0; k < num_of_drives; ++k) {
-        int existing_release = (!goal_locations[k].empty()) ? goal_locations[k].front().second : 0;
         goal_locations[k].clear();
         if (!bundle[k].empty()) {
             int raw_v = clamp_vertex(G, bundle[k].front().first);
             int v = find_exterior_travel_cell_for_endpoint(G, raw_v);
-            int release_t = std::max(bundle[k].front().second, existing_release);
+            int release_t = bundle[k].front().second;
 
             // If robot is already sitting at this goal cell and dwell timer hasn't been
             // set yet (release_t==0), initialize the dwell timer right now so that
@@ -918,7 +917,8 @@ void KivaSystem::bundle_mirror_to_engine()
             }
 
             bundle[k].front().second = release_t;
-            goal_locations[k].push_back({v, release_t});
+            int rel_release_t = (release_t > timestep) ? (release_t - timestep) : 0;
+            goal_locations[k].push_back({v, rel_release_t});
         }
         if (goal_locations[k].empty()) {
             int curr = safe_path_at(paths, G, k, timestep, consider_rotation).location;

@@ -772,6 +772,23 @@ void BasicSystem::solve()
 			 {
 				 std::cout << "[WARN t=" << timestep << "] PBS failed to find complete solution; invoking WHCA*/LRA* fallback." << std::endl;
 				 vector<Path> planned_paths(num_of_drives);
+				 for (int i = 0; i < num_of_drives; i++)
+				 {
+					 int rem_len = (int)paths[i].size() - timestep;
+					 if (rem_len > 0)
+					 {
+						 planned_paths[i].resize(rem_len);
+						 for (int t = 0; t < rem_len; t++)
+						 {
+							 planned_paths[i][t] = paths[i][timestep + t];
+							 planned_paths[i][t].timestep = t;
+						 }
+					 }
+					 else
+					 {
+						 planned_paths[i] = { State(starts[i].location, 0, starts[i].orientation) };
+					 }
+				 }
 				 bool whca_sol = solve_by_WHCA(planned_paths, starts, goal_locations);
 				 if (whca_sol)
 				 {
@@ -781,7 +798,7 @@ void BasicSystem::solve()
 				 else
 				 {
 					 lra.resolve_conflicts(planned_paths);
-					 update_paths(planned_paths);
+					 update_paths(lra.solution);
 					 if (g_crash_log) { (*g_crash_log) << "  solve t=" << timestep << " update_paths (LRA) OK" << std::endl; g_crash_log->flush(); }
 				 }
 			 }
@@ -801,13 +818,13 @@ bool BasicSystem::solve_by_WHCA(vector<Path>& planned_paths,
 {
 	WHCAStar whca(G, solver.path_planner);
     whca.k_robust = k_robust;
-    whca.window = INT_MAX;
-    whca.hold_endpoints = hold_endpoints || useDummyPaths;
+    whca.window = planning_window;
+    whca.hold_endpoints = solver.hold_endpoints;
     whca.screen = screen;
-	whca.initial_rt.hold_endpoints = true;
+	whca.initial_rt.hold_endpoints = solver.initial_rt.hold_endpoints;
 	whca.initial_rt.map_size = G.size();
 	whca.initial_rt.k_robust = k_robust;
-	whca.initial_rt.window = INT_MAX;
+	whca.initial_rt.window = planning_window;
 	whca.initial_rt.copy(solver.initial_rt);
     whca.initial_solution.resize(new_starts.size());
     if (whca.hold_endpoints)
@@ -832,15 +849,8 @@ bool BasicSystem::solve_by_WHCA(vector<Path>& planned_paths,
         }
     }
 	bool sol = false;
-    if (timestep == 0)
-    {
-        sol = whca.run(new_starts, new_goal_locations, 10 * time_limit);
-    }
-    else
-    {
-
-        sol = whca.run(new_starts, new_goal_locations, time_limit);
-    }
+    int whca_cutoff = (timestep == 0) ? std::min(10, time_limit) : std::min(3, time_limit);
+    sol = whca.run(new_starts, new_goal_locations, whca_cutoff);
 	whca.save_results(outfile + "/solver.csv", std::to_string(timestep) + ","
 		+ std::to_string(num_of_drives) + "," + std::to_string(seed));
     if (sol)

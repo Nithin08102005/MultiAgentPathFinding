@@ -215,41 +215,25 @@ void ReservationTable::insertPath2CT(const Path& path)
 		int t = path[i].timestep;
 		if (t - k_robust <= window)
 		{
-			bool is_moving = (i < path.size() - 1);
-			if (is_moving)
+			int cells5[5];
+			G.get_5cell_occupied_cells(path[i].location, path[i].orientation, cells5);
+			for (int c = 0; c < 5; c++)
 			{
-				int cells5[5];
-				G.get_5cell_occupied_cells(path[i].location, path[i].orientation, cells5);
-				for (int c = 0; c < 5; c++)
+				if (cells5[c] >= 0 && cells5[c] < (int)G.types.size() && G.types[cells5[c]] != "Magic" && G.types[cells5[c]] != "Obstacle" && G.types[cells5[c]] != "Endpoint")
 				{
-					if (cells5[c] >= 0 && cells5[c] < (int)G.types.size() && G.types[cells5[c]] != "Magic" && G.types[cells5[c]] != "Obstacle" && G.types[cells5[c]] != "Endpoint")
-					{
-						ct[cells5[c]].emplace_back(max(0, t - k_robust), t + 1 + k_robust);
-					}
-				}
-			}
-			else
-			{
-				int cells3[3];
-				G.get_occupied_cells(path[i].location, path[i].orientation, cells3);
-				for (int c = 0; c < 3; c++)
-				{
-					if (cells3[c] >= 0 && cells3[c] < (int)G.types.size() && G.types[cells3[c]] != "Magic")
-					{
-						ct[cells3[c]].emplace_back(max(0, t - k_robust), t + 1 + k_robust);
-					}
+					ct[cells5[c]].emplace_back(max(0, t - k_robust), t + 1 + k_robust);
 				}
 			}
 
 			if (k_robust == 0 && i > 0 && (path[i-1].location != path[i].location || path[i-1].orientation != path[i].orientation))
 			{
-				int prev_cells[3];
-				G.get_occupied_cells(path[i-1].location, path[i-1].orientation, prev_cells);
-				int curr_cells[3];
-				G.get_occupied_cells(path[i].location, path[i].orientation, curr_cells);
-				for (int c = 0; c < 3; c++)
+				int prev_cells[5];
+				G.get_5cell_occupied_cells(path[i-1].location, path[i-1].orientation, prev_cells);
+				int curr_cells[5];
+				G.get_5cell_occupied_cells(path[i].location, path[i].orientation, curr_cells);
+				for (int c = 0; c < 5; c++)
 				{
-					for (int p = 0; p < 3; p++)
+					for (int p = 0; p < 5; p++)
 					{
 						if (curr_cells[c] >= 0 && curr_cells[c] < (int)G.types.size() && prev_cells[p] >= 0 && prev_cells[p] < (int)G.types.size() &&
                             curr_cells[c] != prev_cells[p] && G.types[curr_cells[c]] != "Magic" && G.types[prev_cells[p]] != "Magic")
@@ -264,13 +248,13 @@ void ReservationTable::insertPath2CT(const Path& path)
 	}
 	if (path.back().location >= 0 && path.back().location < (int)G.types.size() && G.types[path.back().location] != "Magic")
 	{
-		int cells[3];
-		G.get_occupied_cells(path.back().location, path.back().orientation, cells);
+		int cells5[5];
+		G.get_5cell_occupied_cells(path.back().location, path.back().orientation, cells5);
 		int end_t = max((int)path.back().timestep + task_delay + 2, window + 1);
-		for (int c = 0; c < 3; c++)
+		for (int c = 0; c < 5; c++)
 		{
-			if (cells[c] >= 0 && cells[c] < (int)G.types.size())
-				ct[cells[c]].emplace_back(path.back().timestep, end_t);
+			if (cells5[c] >= 0 && cells5[c] < (int)G.types.size() && G.types[cells5[c]] != "Magic" && G.types[cells5[c]] != "Obstacle" && G.types[cells5[c]] != "Endpoint")
+				ct[cells5[c]].emplace_back(path.back().timestep, end_t);
 		}
 	}
 }
@@ -295,16 +279,16 @@ void ReservationTable::insertPath2CAT(const Path& path)
 	int timestep = 0;
 	while (timestep <= max_timestep)
 	{
-		int cells[3];
-		G.get_occupied_cells(path[timestep].location, path[timestep].orientation, cells);
-		for (int c = 0; c < 3; c++)
+		int cells5[5];
+		G.get_5cell_occupied_cells(path[timestep].location, path[timestep].orientation, cells5);
+		for (int c = 0; c < 5; c++)
 		{
-			if (cells[c] >= 0 && cells[c] < (int)G.types.size() && G.types[cells[c]] != "Magic")
+			if (cells5[c] >= 0 && cells5[c] < (int)G.types.size() && G.types[cells5[c]] != "Magic" && G.types[cells5[c]] != "Obstacle" && G.types[cells5[c]] != "Endpoint")
 			{
 				for (int t = max(0, timestep - k_robust); t <= min((int)cat.size() - 1, timestep + k_robust); t++)
 				{
-					if (cells[c] < (int)cat[t].size())
-						cat[t][cells[c]] = true;
+					if (cells5[c] < (int)cat[t].size())
+						cat[t][cells5[c]] = true;
 				}
 			}
 		}
@@ -312,14 +296,14 @@ void ReservationTable::insertPath2CAT(const Path& path)
 	}
 	if (path.back().location >= 0 && path.back().location < (int)G.types.size() && G.types[path.back().location] != "Magic")
 	{
-		int cells[3];
-		G.get_occupied_cells(path.back().location, path.back().orientation, cells);
+		int cells5[5];
+		G.get_5cell_occupied_cells(path.back().location, path.back().orientation, cells5);
 		while (timestep < (int)cat.size()) // assume that the agent waits at its last location
 		{
-			for (int c = 0; c < 3; c++)
+			for (int c = 0; c < 5; c++)
 			{
-				if (cells[c] >= 0 && cells[c] < (int)cat[timestep].size())
-					cat[timestep][cells[c]] = true;
+				if (cells5[c] >= 0 && cells5[c] < (int)cat[timestep].size() && G.types[cells5[c]] != "Obstacle" && G.types[cells5[c]] != "Endpoint")
+					cat[timestep][cells5[c]] = true;
 			}
 			timestep++;
 		}
@@ -678,22 +662,22 @@ bool ReservationTable::isConflicting(const State& curr_s, const State& next_s) c
 	if (next_s.timestep >= (int)cat.size())
 		return false;
 
-	int next_cells[3];
-	G.get_occupied_cells(next_s.location, next_s.orientation, next_cells);
-	for (int c = 0; c < 3; c++)
+	int next_cells5[5];
+	G.get_5cell_occupied_cells(next_s.location, next_s.orientation, next_cells5);
+	for (int c = 0; c < 5; c++)
 	{
-		if (next_cells[c] >= 0 && next_cells[c] < (int)cat[next_s.timestep].size() && cat[next_s.timestep][next_cells[c]])
+		if (next_cells5[c] >= 0 && next_cells5[c] < (int)cat[next_s.timestep].size() && cat[next_s.timestep][next_cells5[c]])
 			return true;
 	}
 
 	if ((curr_s.location != next_s.location || (curr_s.orientation >= 0 && curr_s.orientation != next_s.orientation)) && next_s.timestep > 0)
 	{
-		int curr_cells[3];
-		G.get_occupied_cells(curr_s.location, curr_s.orientation, curr_cells);
-		for (int c = 0; c < 3; c++)
+		int curr_cells5[5];
+		G.get_5cell_occupied_cells(curr_s.location, curr_s.orientation, curr_cells5);
+		for (int c = 0; c < 5; c++)
 		{
-			if (curr_cells[c] >= 0 && curr_cells[c] < (int)cat[next_s.timestep].size() && next_cells[c] >= 0 && next_cells[c] < (int)cat[next_s.timestep - 1].size() &&
-                cat[next_s.timestep][curr_cells[c]] && cat[next_s.timestep - 1][next_cells[c]])
+			if (curr_cells5[c] >= 0 && curr_cells5[c] < (int)cat[next_s.timestep].size() && next_cells5[c] >= 0 && next_cells5[c] < (int)cat[next_s.timestep - 1].size() &&
+                cat[next_s.timestep][curr_cells5[c]] && cat[next_s.timestep - 1][next_cells5[c]])
 				return true;
 		}
 	}

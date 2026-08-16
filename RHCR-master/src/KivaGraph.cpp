@@ -162,9 +162,12 @@ bool KivaGrid::load_unweighted_map(std::string fname)
 			}
 			else if (line[j] == 'r') //robot rest
 			{
-				types[id] = "Travel";
+				types[id] = "Home";
 				weights[id][4] = 1;
-				agent_home_locations.push_back(id);
+				if (j == 2 || j == 54)
+				{
+					agent_home_locations.push_back(id);
+				}
 			}
 			else
 			{
@@ -182,10 +185,24 @@ bool KivaGrid::load_unweighted_map(std::string fname)
 		}
 		for (int dir = 0; dir < 4; dir++)
 		{
-			if (0 <= i + move[dir] && i + move[dir] < cols * rows && get_Manhattan_distance(i, i + move[dir]) <= 1 && types[i + move[dir]] != "Obstacle" && types[i + move[dir]] != "Endpoint")
-				weights[i][dir] = 1;
+			int next_loc = i + move[dir];
+			if (0 <= next_loc && next_loc < cols * rows && get_Manhattan_distance(i, next_loc) <= 1 &&
+				types[next_loc] != "Obstacle" && types[next_loc] != "Endpoint")
+			{
+				if (types[i] != "Home" && types[next_loc] == "Home")
+				{
+					// ONE-WAY EXIT: Disallow entering Home from Travel lanes during tasks!
+					weights[i][dir] = WEIGHT_MAX;
+				}
+				else
+				{
+					weights[i][dir] = 1;
+				}
+			}
 			else
+			{
 				weights[i][dir] = WEIGHT_MAX;
+			}
 		}
 	}
 	

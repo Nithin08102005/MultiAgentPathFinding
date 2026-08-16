@@ -90,7 +90,7 @@ Path SIPP::run(const BasicGraph& G, const State& start,
 	if (hold_endpoints && !goal_location.empty())
 		earliest_holding_time = rt.getHoldingTimeFromSIT(goal_location.back().first);
     if (g_crash_log) { (*g_crash_log) << "        [SIPP::run] entering search loop" << std::endl; g_crash_log->flush(); }
-    while (!focal_list.empty() && num_expanded < 80000)
+    while (!focal_list.empty() && num_expanded < 3000)
     {
         SIPPNode* curr = focal_list.top(); focal_list.pop();
         curr->in_focallist = false;
@@ -174,8 +174,8 @@ Path SIPP::run(const BasicGraph& G, const State& start,
         {
             int back_dir = (curr->state.orientation + 2) % 4; // opposite direction
             int back_location = curr->state.location + G.move[back_dir];
-            // 3-cell check at new position with SAME orientation
-            if (G.valid_3cell_state(back_location, curr->state.orientation))
+            // 3-cell check and valid edge check at new position with SAME orientation
+            if (G.valid_move(curr->state.location, back_dir) && G.valid_3cell_state(back_location, curr->state.orientation))
             {
                 double h_val = compute_h_value(G, back_location, curr->goal_id, goal_location);
                 if (h_val <= INT_MAX)
@@ -279,15 +279,7 @@ Path SIPP::run(const BasicGraph& G, const State& start,
 
     }  // end while loop
 
-    if (num_expanded >= 5000)
-    {
-        std::cout << "[DEBUG SIPP EXPANDED LIMIT] SIPP hit 5,000 node expansion limit for start=" << start.location 
-                  << " (r=" << start.location/G.cols << ",c=" << start.location%G.cols << ") goal=" << goal_location.back().first << std::endl;
-    }
-
     // no path found
-    std::cout << "[DEBUG SIPP EMPTY] SIPP exhausted open_list! num_expanded=" << num_expanded << " num_generated=" << num_generated 
-              << " for start=" << start.location << " (r=" << start.location/G.cols << ",c=" << start.location%G.cols << ") goal=" << goal_location.back().first << std::endl;
     releaseClosedListNodes();
     open_list.clear();
     focal_list.clear();
