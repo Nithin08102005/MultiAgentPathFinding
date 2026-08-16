@@ -37,6 +37,9 @@ class GeneralizedKivaVisualizer:
         self.num_agents = len(self.solution['agents'])
         self.setup_adaptive_parameters()
         
+        # Setup endpoint registry with Zone and Local IDs
+        self.build_endpoint_registry()
+        
         # Pre-cache warehouse statistics
         self.warehouse_stats = {
             'shelves': np.sum(self.map_data == '@'),
@@ -57,7 +60,7 @@ class GeneralizedKivaVisualizer:
         self.trail_artists = []
         
         print(f"SUCCESS: Generalized visualizer ready for {self.num_agents} robots")
-        print(f"Mode: {self.viz_mode} | Grid: {self.grid_width}x{self.grid_height}")
+        print(f"Mode: {self.viz_mode} | Grid: {self.grid_width}x{self.grid_height} | Endpoints: {len(self.endpoint_info_by_loc)} mapped across 4 zones")
 
     def setup_adaptive_parameters(self):
         """Configure visualization parameters based on robot count"""
@@ -148,6 +151,72 @@ class GeneralizedKivaVisualizer:
             # Use continuous color space for large numbers
             self.colors = plt.cm.rainbow(np.linspace(0, 1, self.num_agents))
 
+    def build_endpoint_registry(self):
+        """Map every endpoint in the map to a Zone (Z0-Z3) and local ID (1..128)"""
+        self.endpoint_info_by_loc = {}
+        self.service_to_endpoint = {}
+        
+        mid_x = (self.grid_width - 1) / 2.0
+        mid_y = (self.grid_height - 1) / 2.0
+        
+        zone_endpoints = {0: [], 1: [], 2: [], 3: []}
+        for y in range(self.grid_height):
+            for x in range(self.grid_width):
+                if self.map_data[y, x] == 'e':
+                    loc = y * self.grid_width + x
+                    if x < mid_x:
+                        zid = 0 if y < mid_y else 2
+                    else:
+                        zid = 1 if y < mid_y else 3
+                    zone_endpoints[zid].append((y, x, loc))
+        
+        for zid in range(4):
+            zone_endpoints[zid].sort(key=lambda item: (item[0], item[1]))
+            for idx, (ey, ex, eloc) in enumerate(zone_endpoints[zid], start=1):
+                info = {
+                    'zone': zid,
+                    'id': idx,
+                    'x': ex,
+                    'y': ey,
+                    'loc': eloc,
+                    'label': f"Z{zid}:{idx}"
+                }
+                self.endpoint_info_by_loc[eloc] = info
+                
+                # Map adjacent travel dots (exterior service cells) to this endpoint
+                for dy in [-1, 1]:
+                    sy = ey + dy
+                    if 0 <= sy < self.grid_height:
+                        sloc = sy * self.grid_width + ex
+                        if sloc not in self.service_to_endpoint:
+                            self.service_to_endpoint[sloc] = info
+
+    def get_current_target_info(self, agent_id, t):
+        """Get the current target endpoint info (Zone and local ID) for an agent at time t"""
+        if agent_id not in self.tasks or not self.tasks[agent_id]:
+            return None
+        
+        # tasks[agent_id] is a list of (loc, finish_time)
+        # Find the active task where finish_time > t
+        for loc, finish_time in self.tasks[agent_id][1:]:
+            if finish_time > t or finish_time < 0:
+                if loc in self.endpoint_info_by_loc:
+                    return self.endpoint_info_by_loc[loc]
+                elif loc in self.service_to_endpoint:
+                    return self.service_to_endpoint[loc]
+                else:
+                    tx, ty = self.location_to_xy(loc)
+                    return {'label': f"({tx},{ty})", 'x': tx, 'y': ty, 'zone': agent_id % 4, 'id': 0}
+        
+        # If all tasks are completed, show the last target
+        last_loc = self.tasks[agent_id][-1][0]
+        if last_loc in self.endpoint_info_by_loc:
+            return self.endpoint_info_by_loc[last_loc]
+        elif last_loc in self.service_to_endpoint:
+            return self.service_to_endpoint[last_loc]
+        tx, ty = self.location_to_xy(last_loc)
+        return {'label': f"({tx},{ty})", 'x': tx, 'y': ty, 'zone': agent_id % 4, 'id': 0}
+
     def setup_adaptive_layout(self):
         """Setup figure layout based on visualization mode with Dark Theme"""
         plt.style.use('dark_background')
@@ -224,35 +293,67 @@ class GeneralizedKivaVisualizer:
                 self.ax_main.axhline(y - 0.5, color='lightgray', linewidth=0.2, alpha=0.5)
 
     def render_detailed_warehouse(self):
-        """Full warehouse detail for ≤10 robots (Dark Theme)"""
+        """Full warehouse detail with Zone-coded endpoint IDs (Dark Theme)"""
+        zone_colors = {
+            0: ('#0a2a4a', '#00b0ff'),
+            1: ('#0a3820', '#00e676'),
+            2: ('#422000', '#ff9100'),
+            3: ('#38004a', '#e040fb')
+        }
         for y in range(self.grid_height):
             for x in range(self.grid_width):
                 cell = self.map_data[y, x]
+                loc = y * self.grid_width + x
                 
                 if cell == '@':
                     rect = Rectangle((x-0.5, y-0.5), 1, 1, facecolor='#2a2b38', edgecolor='#3d3f54', alpha=0.9, zorder=2)
                     self.ax_main.add_patch(rect)
                 elif cell == 'e':
-                    rect = Rectangle((x-0.5, y-0.5), 1, 1, facecolor='#ffab00', edgecolor='#ffd600', alpha=0.85, zorder=2)
-                    self.ax_main.add_patch(rect)
-                    self.ax_main.text(x, y, 'E', ha='center', va='center', fontweight='bold', fontsize=6, color='#101016', zorder=10)
+                    info = self.endpoint_info_by_loc.get(loc, None)
+                    if info:
+                        zid = info['zone']
+                        num_str = str(info['id'])
+                        bg_col, edge_col = zone_colors.get(zid, ('#2a2b38', '#ffd600'))
+                        rect = Rectangle((x-0.5, y-0.5), 1, 1, facecolor=bg_col, edgecolor=edge_col, alpha=0.92, linewidth=0.8, zorder=2)
+                        self.ax_main.add_patch(rect)
+                        self.ax_main.text(x, y, num_str, ha='center', va='center', fontweight='bold', fontsize=5.0, color='#ffffff', zorder=10)
+                    else:
+                        rect = Rectangle((x-0.5, y-0.5), 1, 1, facecolor='#ffab00', edgecolor='#ffd600', alpha=0.85, zorder=2)
+                        self.ax_main.add_patch(rect)
+                        self.ax_main.text(x, y, 'E', ha='center', va='center', fontweight='bold', fontsize=6, color='#101016', zorder=10)
                 elif cell == 'r':
                     rect = Rectangle((x-0.5, y-0.5), 1, 1, facecolor='#00b0ff', edgecolor='#80d8ff', alpha=0.4, zorder=2)
                     self.ax_main.add_patch(rect)
                     self.ax_main.text(x, y, 'R', ha='center', va='center', fontweight='bold', fontsize=6, color='#ffffff', zorder=10)
 
     def render_medium_warehouse(self):
-        """Simplified warehouse for 10-30 robots"""
+        """Simplified warehouse with Zone-coded endpoint IDs for 10-30 robots"""
+        zone_colors = {
+            0: ('#0a2a4a', '#00b0ff'),
+            1: ('#0a3820', '#00e676'),
+            2: ('#422000', '#ff9100'),
+            3: ('#38004a', '#e040fb')
+        }
         for y in range(self.grid_height):
             for x in range(self.grid_width):
                 cell = self.map_data[y, x]
+                loc = y * self.grid_width + x
                 
                 if cell == '@':
-                    rect = Rectangle((x-0.5, y-0.5), 1, 1, facecolor='brown', alpha=0.8)
+                    rect = Rectangle((x-0.5, y-0.5), 1, 1, facecolor='#2a2b38', alpha=0.8)
                     self.ax_main.add_patch(rect)
                 elif cell == 'e':
-                    rect = Rectangle((x-0.5, y-0.5), 1, 1, facecolor='orange', alpha=0.7)
-                    self.ax_main.add_patch(rect)
+                    info = self.endpoint_info_by_loc.get(loc, None)
+                    if info:
+                        zid = info['zone']
+                        num_str = str(info['id'])
+                        bg_col, edge_col = zone_colors.get(zid, ('#2a2b38', '#ffd600'))
+                        rect = Rectangle((x-0.5, y-0.5), 1, 1, facecolor=bg_col, edgecolor=edge_col, alpha=0.85, linewidth=0.7, zorder=2)
+                        self.ax_main.add_patch(rect)
+                        self.ax_main.text(x, y, num_str, ha='center', va='center', fontweight='bold', fontsize=4.5, color='#ffffff', zorder=10)
+                    else:
+                        rect = Rectangle((x-0.5, y-0.5), 1, 1, facecolor='orange', alpha=0.7)
+                        self.ax_main.add_patch(rect)
                 elif cell == 'r':
                     rect = Rectangle((x-0.5, y-0.5), 1, 1, facecolor='lightblue', alpha=0.5)
                     self.ax_main.add_patch(rect)
@@ -369,22 +470,37 @@ class GeneralizedKivaVisualizer:
                 self.ax_main.add_patch(rect)
                 self.agent_artists.append(rect)
                 
-                # Robot ID centered inside robot body, zone badge floating offset above robot
+                # Target endpoint lookup and status
+                target_info = self.get_current_target_info(agent_id, timestep)
+                target_label = target_info['label'] if target_info else "IDLE"
+                
+                cell_x, cell_y = int(round(x)), int(round(y))
+                cell_type = self.map_data[cell_y, cell_x] if 0 <= cell_y < self.grid_height and 0 <= cell_x < self.grid_width else '?'
+                zone_id = agent_id % 4
+                completed_tasks = self.get_completed_tasks_count(agent_id, timestep)
+                
+                # Detect picking/dwelling (at target endpoint or adjacent service cell)
+                is_picking = (cell_type == 'e') or (target_info and target_info['x'] == cell_x and abs(target_info['y'] - cell_y) <= 1 and (orient_curr == 0 or orient_curr == 2))
+
+                # Robot ID centered inside robot body, target badge floating offset above robot
                 if self.show_robot_ids and self.font_size > 0:
-                    completed_tasks = self.get_completed_tasks_count(agent_id, timestep)
-                    zone_id = agent_id % 4
-                    
-                    # 1. Clean Robot ID inside robot body (no obscuring background box)
+                    # 1. Clean Robot ID inside robot body
                     text_id = self.ax_main.text(x, y, f"R{agent_id}", ha='center', va='center',
                                                fontweight='bold', fontsize=self.font_size, color='#ffffff', zorder=7)
                     self.agent_artists.append(text_id)
                     
-                    # 2. Compact Zone & Task floating tag offset above robot
-                    tag_y = y - 0.85  # Offset above top edge (in inverted Y-axis)
-                    tag_label = f"Z{zone_id} [{completed_tasks}]"
+                    # 2. Dynamic Target & Task floating tag offset above robot
+                    tag_y = y - 0.85
+                    if is_picking:
+                        tag_label = f"R{agent_id} [PICK {target_label}]"
+                        badge_edge = "#ffd600"
+                    else:
+                        tag_label = f"R{agent_id} → {target_label} [{completed_tasks}]"
+                        badge_edge = color
+                        
                     text_tag = self.ax_main.text(x, tag_y, tag_label, ha='center', va='center',
-                                               fontweight='bold', fontsize=max(6, self.font_size - 2), color='#ffffff', zorder=8,
-                                               bbox=dict(boxstyle="round,pad=0.15", facecolor="#0a0a0f", edgecolor=color, alpha=0.85, linewidth=1.0))
+                                               fontweight='bold', fontsize=max(5.5, self.font_size - 2.5), color='#ffffff', zorder=8,
+                                               bbox=dict(boxstyle="round,pad=0.2", facecolor="#0a0a14", edgecolor=badge_edge, alpha=0.9, linewidth=1.2))
                     self.agent_artists.append(text_tag)
                 
                 # Trail
@@ -399,27 +515,21 @@ class GeneralizedKivaVisualizer:
                         line, = self.ax_main.plot(trail_x, trail_y, color=color, alpha=self.trail_alpha, linewidth=1)
                         self.trail_artists.append(line)
                 
-                # Status tracking (based on nearest grid point)
-                cell_x, cell_y = int(round(x)), int(round(y))
-                cell_type = self.map_data[cell_y, cell_x] if 0 <= cell_y < self.grid_height and 0 <= cell_x < self.grid_width else '?'
-                zone_id = agent_id % 4
-                if cell_type == 'e':
+                if is_picking:
                     picking_count += 1
                     if self.show_individual_status:
-                        completed_tasks = self.get_completed_tasks_count(agent_id, timestep)
-                        robot_status.append(f"R{agent_id} (Z{zone_id}): ({x:.1f},{y:.1f}) PICKING ({completed_tasks} tasks)")
+                        robot_status.append(f"R{agent_id} (Z{zone_id}): -> {target_label} [PICKING] ({completed_tasks} done)")
                     star = self.ax_main.plot(cell_x, cell_y, '*', color='yellow', markersize=max(6, 12-self.num_agents//10), markeredgecolor='black')[0]
                     self.agent_artists.append(star)
                 else:
                     active_count += 1
                     if self.show_individual_status:
-                        completed_tasks = self.get_completed_tasks_count(agent_id, timestep)
-                        robot_status.append(f"R{agent_id} (Z{zone_id}): ({x:.1f},{y:.1f}) ACTIVE ({completed_tasks} tasks)")
+                        robot_status.append(f"R{agent_id} (Z{zone_id}): -> {target_label} [NAVIGATING] ({completed_tasks} done)")
             else:
                 completed_count += 1
                 if self.show_individual_status:
                     completed_tasks = self.get_completed_tasks_count(agent_id, timestep)
-                    robot_status.append(f"R{agent_id}: COMPLETED ({completed_tasks} tasks)")
+                    robot_status.append(f"R{agent_id}: [COMPLETED] ({completed_tasks} done)")
         
         # Update title
         total_tasks_completed = sum(self.get_completed_tasks_count(agent_id, timestep) for agent_id in self.solution['agents'].keys())
