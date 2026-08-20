@@ -25,6 +25,7 @@ public:
     void setRandomizeSequences(bool on)           { randomize_sequences = on; }
     void setRngSeed(unsigned s)                   { rng_seed = s; }
     void setSafetyMode(bool on)                   { safety_mode = on; }
+    void setReorderMode(int m)                    { reorder_mode = m; }
     void setAutoRefill(bool on)                   { auto_refill = on; }
     void setAvoidDuplicateGoals(bool on)          { avoid_dup_goals = on; }
     void setCapacityDebug(bool on)                { capacity_debug = on; }
@@ -70,6 +71,7 @@ private:
     bool auto_refill           = true;
     bool avoid_dup_goals       = true;
     bool capacity_debug        = false;
+    int  reorder_mode          = 2; // 0: FIFO, 1: Naive Distance, 2: Fast 2-Opt ST-TSP
 
     // helpers for capacity behavior
     int  cap_of(int k) const;
@@ -80,7 +82,7 @@ private:
     void bundle_mirror_to_engine();
     void bundle_assert_capacity_ok(int k);
 
-    void reorder_bundle_by_dvs(int k);
+    void reorder_bundle_by_dvs(int k, bool allow_full_reorder = true);
     bool dss_debug_print = true;  
 
     int  generate_endpoint_for(int k, int avoid_v) const;

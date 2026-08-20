@@ -138,6 +138,7 @@ int main(int argc, char** argv)
 		("capacity_mode", po::value<bool>()->default_value(true), "enable capacity mode")
 		("capacity", po::value<int>()->default_value(3), "robot capacity")
 		("safety_mode", po::value<bool>()->default_value(true), "enable safety reordering")
+		("reorder_mode", po::value<int>()->default_value(2), "goal reorder mode (0: FIFO, 1: Naive Distance, 2: Fast 2-Opt ST-TSP)")
 		;
 	clock_t start_time = clock();
 	po::variables_map vm;
@@ -199,6 +200,8 @@ int main(int argc, char** argv)
 			system.setAgentCapacity(vm["capacity"].as<int>());
 		if (vm.count("safety_mode"))
 			system.setSafetyMode(vm["safety_mode"].as<bool>());
+		if (vm.count("reorder_mode"))
+			system.setReorderMode(vm["reorder_mode"].as<int>());
 		G.preprocessing(system.consider_rotation);
 		system.simulate(vm["simulation_time"].as<int>());
 		return 0;

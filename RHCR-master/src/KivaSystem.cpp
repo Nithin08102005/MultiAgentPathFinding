@@ -936,59 +936,243 @@ static inline int get_dist_h(const KivaGrid& G, int u, int v) {
     return G.get_Manhattan_distance(u, target);
 }
 
-static int get_aisle_traffic_penalty(const KivaGrid& G, std::vector<Path>& paths, int current_agent, int target_raw_v, int current_t) {
+static int get_projected_route_space_time_penalty(const KivaGrid& G, std::vector<Path>& paths, int current_agent, int start_loc, int start_ori, int target_raw_v, int start_t, int task_delay, bool consider_rotation)
+{
     if (paths.empty()) return 0;
+    if (start_t <= 0) return 0; // At timestep 0, no multi-agent paths exist yet
 
-    int target = find_exterior_travel_cell_for_endpoint(G, target_raw_v);
-    int traffic_count = 0;
+    int target_cell = find_exterior_travel_cell_for_endpoint(G, target_raw_v);
+    if (target_cell < 0 || target_cell >= G.size()) return 0;
 
-    for (int i = 0; i < (int)paths.size(); ++i) {
-        if (i == current_agent || paths[i].empty()) continue;
-        const State& st = safe_path_at(paths, G, i, current_t, true);
-        int teammate_loc = clamp_vertex(G, st.location);
-        if (G.get_Manhattan_distance(teammate_loc, target) <= 3) {
-            traffic_count++;
+    auto it = G.heuristics.find(target_cell);
+    const std::vector<double>* h_table = (it != G.heuristics.end()) ? &(it->second) : nullptr;
+
+    // Trace the shortest-path trajectory from start_loc to target_cell
+    std::vector<std::pair<int, int>> trajectory; // vector of (location, orientation)
+    int curr = start_loc;
+    int curr_ori = (start_ori >= 0 && start_ori < 4) ? start_ori : 0;
+    int max_steps = 60; // safety guard to prevent infinite loops
+
+    trajectory.push_back({curr, curr_ori});
+
+    while (curr != target_cell && max_steps-- > 0)
+    {
+        int best_next = curr;
+        double best_h = (h_table && curr < (int)h_table->size()) ? (*h_table)[curr] : G.get_Manhattan_distance(curr, target_cell);
+        int best_next_ori = curr_ori;
+
+        for (int dir = 0; dir < 4; ++dir)
+        {
+            if (!G.valid_move(curr, dir)) continue;
+            int next_loc = curr + G.move[dir];
+            if (next_loc < 0 || next_loc >= G.size()) continue;
+
+            double h_val = (h_table && next_loc < (int)h_table->size()) ? (*h_table)[next_loc] : G.get_Manhattan_distance(next_loc, target_cell);
+            if (h_val < best_h)
+            {
+                best_h = h_val;
+                best_next = next_loc;
+                best_next_ori = dir;
+            }
         }
+
+        if (best_next == curr) break; // reached local minimum or target
+        curr = best_next;
+        curr_ori = best_next_ori;
+        trajectory.push_back({curr, curr_ori});
     }
 
-    return traffic_count * 5; // 5-timestep penalty per nearby teammate
+    int total_penalty = 0;
+    const int path_len = (int)trajectory.size();
+
+    // 1. Check each transit step along the trajectory at its projected timestamp
+    for (int step = 0; step < path_len; ++step)
+    {
+        int t = start_t + step;
+        int my_loc = trajectory[step].first;
+        int my_ori = trajectory[step].second;
+
+        int my_footprint[5];
+        G.get_5cell_occupied_cells(my_loc, my_ori, my_footprint);
+
+        for (int other = 0; other < (int)paths.size(); ++other)
+        {
+            if (other == current_agent || paths[other].empty()) continue;
+            if (t >= (int)paths[other].size()) continue; // Only check actual planned steps; do NOT guess beyond planned horizon
+
+            const State& other_st = paths[other][t];
+            int other_footprint[5];
+            G.get_5cell_occupied_cells(other_st.location, other_st.orientation, other_footprint);
+
+            for (int mc = 0; mc < 5; ++mc)
+            {
+                if (my_footprint[mc] < 0 || my_footprint[mc] >= (int)G.types.size()) continue;
+                if (G.types[my_footprint[mc]] == "Magic" || G.types[my_footprint[mc]] == "Obstacle") continue;
+
+                for (int oc = 0; oc < 5; ++oc)
+                {
+                    if (my_footprint[mc] == other_footprint[oc])
+                    {
+                        total_penalty += 15; // real physical footprint obstruction at time t
+                        goto next_step;
+                    }
+                }
+            }
+        }
+        next_step:;
+    }
+
+    // 2. Check the 7-step dwell window at target_cell
+    int arrival_t = start_t + std::max(0, path_len - 1);
+    int dwell_steps = (task_delay > 0) ? task_delay : 7;
+    int target_footprint[5];
+    G.get_5cell_occupied_cells(target_cell, curr_ori, target_footprint);
+
+    for (int dt = 1; dt <= dwell_steps; ++dt)
+    {
+        int t = arrival_t + dt;
+        for (int other = 0; other < (int)paths.size(); ++other)
+        {
+            if (other == current_agent || paths[other].empty()) continue;
+            if (t >= (int)paths[other].size()) continue; // Only check actual planned steps
+
+            const State& other_st = paths[other][t];
+            int other_footprint[5];
+            G.get_5cell_occupied_cells(other_st.location, other_st.orientation, other_footprint);
+
+            for (int tc = 0; tc < 5; ++tc)
+            {
+                if (target_footprint[tc] < 0 || target_footprint[tc] >= (int)G.types.size()) continue;
+                if (G.types[target_footprint[tc]] == "Magic" || G.types[target_footprint[tc]] == "Obstacle") continue;
+
+                for (int oc = 0; oc < 5; ++oc)
+                {
+                    if (target_footprint[tc] == other_footprint[oc])
+                    {
+                        total_penalty += 15;
+                        goto next_dwell_step;
+                    }
+                }
+            }
+        }
+        next_dwell_step:;
+    }
+
+    return total_penalty;
+}
+
+static int evaluate_sequence_cost(const KivaGrid& G, std::vector<Path>& paths, int k,
+                                  const std::vector<std::pair<int,int>>& items,
+                                  const std::vector<int>& perm,
+                                  int start_v, int start_ori, int current_t,
+                                  int task_delay, bool consider_rotation, int reorder_mode)
+{
+    int cost = 0;
+    int prev_v = start_v;
+    int prev_ori = start_ori;
+    int projected_t = current_t;
+    const int N = (int)perm.size();
+
+    for (int i = 0; i < N; ++i) {
+        int goal_raw = items[perm[i]].first;
+        int dist = get_dist_h(G, prev_v, goal_raw);
+        int penalty = 0;
+
+        if (reorder_mode == 2 && current_t > 0) {
+            penalty = get_projected_route_space_time_penalty(G, paths, k, prev_v, prev_ori, goal_raw, projected_t, task_delay, consider_rotation);
+        }
+
+        cost += dist + penalty;
+        prev_v = find_exterior_travel_cell_for_endpoint(G, goal_raw);
+        projected_t += dist + (task_delay > 0 ? task_delay : 7);
+    }
+    return cost;
 }
 
 // -------------------------- reorder by DVS (Dynamic Traffic-Aware Distance) --------------------------
-void KivaSystem::reorder_bundle_by_dvs(int k)
+void KivaSystem::reorder_bundle_by_dvs(int k, bool allow_full_reorder)
 {
-    if (!safety_mode) return;
+    if (!safety_mode || reorder_mode == 0) return; // Mode 0: FIFO (no reordering)
     if (k < 0 || k >= (int)bundle.size()) return;
     if (bundle[k].size() <= 1) return;
 
-    const int start_v = safe_path_at(paths, G, k, timestep, consider_rotation).location;
+    const State& curr_st = safe_path_at(paths, G, k, timestep, consider_rotation);
+    const int start_v = curr_st.location;
+    const int start_ori = curr_st.orientation;
 
     std::vector<std::pair<int,int>> items(bundle[k].begin(), bundle[k].end());
     const int N = (int)items.size();
 
-    std::vector<int> perm(N);
-    for (int i = 0; i < N; ++i) perm[i] = i;
+    std::vector<int> best_perm(N);
+    for (int i = 0; i < N; ++i) best_perm[i] = i;
 
-    std::vector<int> best_perm = perm;
-    int best_cost = INT_MAX;
+    if (N <= 3) {
+        // For small N (<= 3), exhaustive permutation (<= 6 permutations) is instant
+        std::vector<int> perm = best_perm;
+        int best_cost = INT_MAX;
+        do {
+            if (!allow_full_reorder && perm[0] != 0) continue;
+            int cost = evaluate_sequence_cost(G, paths, k, items, perm, start_v, start_ori, timestep, task_delay, consider_rotation, reorder_mode);
+            if (cost < best_cost) {
+                best_cost = cost;
+                best_perm = perm;
+            }
+        } while (std::next_permutation(perm.begin(), perm.end()));
+    }
+    else {
+        // For N > 3 (e.g. Capacity = 7): Fast Nearest-Neighbor + 2-Opt TSP Optimizer (< 1ms)
+        // 1. Initial Nearest-Neighbor Greedy Construction
+        std::vector<int> perm;
+        std::vector<bool> visited(N, false);
 
-    do {
-        int cost = 0;
-        int prev_v = start_v;
-
-        for (int i = 0; i < N; ++i) {
-            int goal_raw = items[perm[i]].first;
-            int dist = get_dist_h(G, prev_v, goal_raw);
-            int penalty = (timestep > 0) ? get_aisle_traffic_penalty(G, paths, k, goal_raw, timestep) : 0;
-            cost += dist + penalty;
-            prev_v = find_exterior_travel_cell_for_endpoint(G, goal_raw);
+        if (!allow_full_reorder) {
+            perm.push_back(0);
+            visited[0] = true;
         }
 
-        if (cost < best_cost) {
-            best_cost = cost;
-            best_perm = perm;
+        int curr_loc = (perm.empty()) ? start_v : find_exterior_travel_cell_for_endpoint(G, items[perm.back()].first);
+        while ((int)perm.size() < N) {
+            int nearest_idx = -1;
+            int min_d = INT_MAX;
+            for (int j = 0; j < N; ++j) {
+                if (visited[j]) continue;
+                int d = get_dist_h(G, curr_loc, items[j].first);
+                if (d < min_d) {
+                    min_d = d;
+                    nearest_idx = j;
+                }
+            }
+            if (nearest_idx == -1) break;
+            perm.push_back(nearest_idx);
+            visited[nearest_idx] = true;
+            curr_loc = find_exterior_travel_cell_for_endpoint(G, items[nearest_idx].first);
         }
-    } while (std::next_permutation(perm.begin(), perm.end()));
+
+        best_perm = perm;
+        int best_cost = evaluate_sequence_cost(G, paths, k, items, best_perm, start_v, start_ori, timestep, task_delay, consider_rotation, reorder_mode);
+
+        // 2. 2-Opt Local Search Improvement
+        int start_idx = (!allow_full_reorder) ? 1 : 0;
+        bool improved = true;
+        int max_2opt_passes = 10;
+
+        while (improved && max_2opt_passes-- > 0) {
+            improved = false;
+            for (int i = start_idx; i < N - 1; ++i) {
+                for (int j = i + 1; j < N; ++j) {
+                    std::vector<int> candidate = best_perm;
+                    std::reverse(candidate.begin() + i, candidate.begin() + j + 1);
+
+                    int candidate_cost = evaluate_sequence_cost(G, paths, k, items, candidate, start_v, start_ori, timestep, task_delay, consider_rotation, reorder_mode);
+                    if (candidate_cost < best_cost) {
+                        best_cost = candidate_cost;
+                        best_perm = candidate;
+                        improved = true;
+                    }
+                }
+            }
+        }
+    }
 
     std::deque<std::pair<int,int>> reordered;
     for (int idx : best_perm) {
@@ -1652,7 +1836,8 @@ void KivaSystem::update_goal_locations()
             bool topped = bundle_maybe_top_up(k);
             bool changed = popped || topped;
 
-            if (safety_mode) { reorder_bundle_by_dvs(k); changed = true; }
+            bool allow_full = (popped || timestep == 0);
+            if (safety_mode) { reorder_bundle_by_dvs(k, allow_full); changed = true; }
 
             if (changed) bundle_dirty[k] = true;
 
