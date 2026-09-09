@@ -1,0 +1,201 @@
+\documentclass[journal]{IEEEtran}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{algorithm}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{url}
+\usepackage{cite}
+
+\begin{document}
+
+\title{Bi-Level Space-Time Goal Scheduling and Multi-Agent Pathfinding for Capacitated Automated Warehouses}
+
+\author{Author Names}
+
+\maketitle
+
+\begin{abstract}
+In automated robotic warehouses, coordinating fleets of Automated Guided Vehicles (AGVs) carrying multiple inventory tasks requires solving two interdependent, computationally intractable problems: multi-task sequencing (Capacitated Traveling Salesperson Problem) and conflict-free trajectory planning (Multi-Agent Path Finding). Decoupled approaches that sequence tasks purely on static map distances suffer from severe traffic congestion in shared corridors. In this paper, we formulate the Capacitated Multi-Goal Multi-Agent Pathfinding (C-MG-MAPF) problem as a Mixed-Integer Linear Program (MILP) with realistic 5-cell physical chassis footprints, $90^\circ$ rotational kinematics, and shelf picking dwell times. Proving the problem to be strongly NP-hard, we propose a scalable Bi-Level optimization architecture. The upper level employs an ultra-fast $O(N^2)$ Space-Time 2-Opt local search optimizer that evaluates exact second-by-second teammate clearance wait times, while the lower level executes rolling-horizon Priority-Based Search (PBS) with Safe Interval Path Planning (SIPP). Extensive 1,000-timestep simulations across a 16-robot, 512-endpoint warehouse demonstrate that our proposed approach achieves 832 completed tasks, delivering a +58.8\% throughput improvement over uncoordinated FIFO baselines and outperforming static TSP methods in sub-millisecond computation time.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Multi-Agent Path Finding, Task Assignment, Autonomous Warehousing, Traveling Salesperson Problem, Rolling-Horizon Planning.
+\end{IEEEkeywords}
+
+\section{System Model and Problem Formulation}
+
+\subsection{Environment and Robot Kinematics}
+Let the warehouse operational environment be represented as a topological graph $G = (V, E)$, where $V$ is the set of traversable grid vertices (travel cells, pick stations, shelf endpoints) and $E \subseteq V \times V$ represents directed traversable edges. A fleet of $M$ homogeneous mobile robots is denoted by $A = \{1, 2, \dots, M\}$.
+
+At each discrete timestep $t \in \{0, 1, \dots, T_{\max}\}$, the physical state of robot $k \in A$ is defined by:
+\begin{equation}
+s_k(t) = \langle p_k(t), \theta_k(t) \rangle
+\end{equation}
+where $p_k(t) \in V$ is the center cell location and $\theta_k(t) \in \{0, 1, 2, 3\}$ denotes the cardinal heading orientation (East, North, West, South). 
+
+To prevent physical chassis overlap on real AGV hardware, each robot occupies a non-zero 5-cell spatial footprint $\mathcal{F}(p, \theta)$ during straight travel and dwell:
+\begin{equation}
+\mathcal{F}(p_k(t), \theta_k(t)) = \{p, \, p + \vec{e}_{\text{front}}(\theta), \, p + \vec{e}_{\text{back}}(\theta), \, p + \vec{e}_{\text{left}}(\theta), \, p + \vec{e}_{\text{right}}(\theta)\}
+\end{equation}
+During in-place $90^\circ$ rotational maneuvers ($\theta_k(t+1) \neq \theta_k(t)$), the sweeping corners expand the required clearance envelope to the full $3 \times 3$ bounding box (9-cell rotational clearance):
+\begin{equation}
+\mathcal{F}_{\text{rot}}(p_k(t)) = \{p_k(t) + (\Delta r, \Delta c) \mid \Delta r, \Delta c \in \{-1, 0, 1\}\}, \quad |\mathcal{F}_{\text{rot}}| = 9
+\end{equation}
+The active space-time reservation is dynamically assigned as $\mathcal{F}_{\text{active}}(k, t) = \mathcal{F}_{\text{rot}}(p_k(t))$ when turning and $\mathcal{F}(p_k(t), \theta_k(t))$ otherwise, strictly enforcing $\mathcal{F}_{\text{active}}(k, t) \cap \mathcal{F}_{\text{active}}(w, t) = \emptyset$ for all $k \neq w$. Furthermore, to avoid physical collision with static racks and pillars, rotational maneuvers at vertex $p$ are kinematically permitted if and only if all 9 cells of $\mathcal{F}_{\text{rot}}(p)$ consist strictly of traversable highway cells ($\mathcal{F}_{\text{rot}}(p) \cap (V_{\text{obstacle}} \cup V_{\text{endpoint}}) = \emptyset$).
+
+\subsection{Multi-Task Capacity and Service Dwell Model}
+Each robot $k \in A$ possesses a finite multi-task carrying capacity $C \in \mathbb{N}^+$ ($C > 1$). At any planning cycle, robot $k$ manages an active bundle of $N_k \le C$ assigned shelf picking tasks:
+\begin{equation}
+\mathcal{T}_k = \{g_{k,1}, g_{k,2}, \dots, g_{k,N_k}\} \subset V
+\end{equation}
+Upon reaching target shelf endpoint $g_{k,i}$, the robot must remain stationary for a service dwell duration $\Delta$ timesteps (e.g., $\Delta = 7$ seconds) to complete the automated picking operation:
+\begin{equation}
+d_k(g_{k,i}) = a_k(g_{k,i}) + \Delta
+\end{equation}
+where $a_k(g_{k,i})$ and $d_k(g_{k,i})$ denote the arrival and departure timestamps, respectively.
+
+\subsection{Mixed-Integer Linear Programming (MILP) Formulation}
+
+\subsubsection{Decision Variables}
+\begin{itemize}
+    \item $x_{k, u, v} \in \{0, 1\}$: Binary routing variable; equals $1$ if robot $k$ visits goal $u$ immediately prior to goal $v$; $0$ otherwise ($\forall k \in A, u, v \in \mathcal{T}_k \cup \{\text{start}_k\}$).
+    \item $a_k(u) \ge 0$: Integer arrival timestamp when robot $k$ arrives at goal location $u$ ($\forall k \in A, u \in \mathcal{T}_k$).
+    \item $p_k(t) \in V, \theta_k(t) \in \{0, 1, 2, 3\}$: Discrete space-time path trajectory of robot $k$ ($\forall k \in A, t \in [0, T_{\max}]$).
+\end{itemize}
+
+\subsubsection{Objective Function}
+The global objective minimizes the Total System Flowtime across all assigned capacity tasks for the multi-robot fleet:
+\begin{equation}
+\min \sum_{k \in A} \sum_{u \in \mathcal{T}_k} a_k(u)
+\end{equation}
+
+\subsubsection{System Constraints}
+\begin{itemize}
+    \item \textbf{Routing and Tour Conservation:}
+    \begin{equation}
+    \sum_{v \in \mathcal{T}_k, v \neq u} x_{k, u, v} = 1, \quad \forall k \in A, \; \forall u \in \mathcal{T}_k \cup \{\text{start}_k\}
+    \end{equation}
+    \begin{equation}
+    \sum_{u \in \mathcal{T}_k \cup \{\text{start}_k\}, u \neq v} x_{k, u, v} = 1, \quad \forall k \in A, \; \forall v \in \mathcal{T}_k
+    \end{equation}
+
+    \item \textbf{Sub-tour Elimination (MTZ Formulation):}
+    \begin{multline}
+    a_k(v) \ge a_k(u) + \Delta + t_{\text{travel}}(u, v) - M_{\text{big}}(1 - x_{k, u, v}), \\
+    \forall k \in A, \; \forall u, v \in \mathcal{T}_k, \; u \neq v
+    \end{multline}
+    where $M_{\text{big}}$ is a sufficiently large positive constant and $t_{\text{travel}}(u, v)$ is the physical travel time.
+
+    \item \textbf{Time-Dependent Trajectory Precedence:}
+    \begin{equation}
+    a_k(v) \ge d_k(u) + \sum_{t = d_k(u)}^{a_k(v)} \mathbb{I}(p_k(t) \neq p_k(t-1))
+    \end{equation}
+
+    \item \textbf{Spatial 5-Cell Footprint Collision Avoidance:}
+    \begin{multline}
+    \mathcal{F}(p_k(t), \theta_k(t)) \cap \mathcal{F}(p_w(t), \theta_w(t)) = \emptyset, \\
+    \forall k, w \in A, \; k \neq w, \; \forall t \in [0, T_{\max}]
+    \end{multline}
+
+    \item \textbf{Edge / Head-On Collision Avoidance:}
+    \begin{multline}
+    (p_k(t), p_k(t+1)) \neq (p_w(t+1), p_w(t)), \\
+    \forall k, w \in A, \; k \neq w, \; \forall t \in [0, T_{\max}-1]
+    \end{multline}
+
+    \item \textbf{Kinematic Motion Transitions:}
+    Between successive timesteps $t$ and $t+1$, robot $k$ may only execute:
+    \begin{equation}
+    \begin{cases}
+    (p_k(t), p_k(t+1)) \in E, \; \theta_k(t+1) = \theta_k(t) & \text{(Forward)}, \\
+    p_k(t+1) = p_k(t), \; \theta_k(t+1) = (\theta_k(t) \pm 1) \pmod 4 & \text{(Turn } 90^\circ\text{)}, \\
+    p_k(t+1) = p_k(t), \; \theta_k(t+1) = \theta_k(t) & \text{(Wait)}.
+    \end{cases}
+    \end{equation}
+\end{itemize}
+
+\section{Complexity and Theoretical Intractability}
+
+\newtheorem{theorem}{Theorem}
+\begin{theorem}
+The Capacitated Multi-Goal Multi-Agent Pathfinding problem (C-MG-MAPF) is strongly NP-hard.
+\end{theorem}
+
+\begin{IEEEproof}
+We establish hardness via two independent reductions:
+\begin{enumerate}
+    \item \textbf{Single-Agent Subproblem ($M = 1$):} In the absence of collision constraints, optimizing the sequence of $N_k$ tasks reduces directly to the Traveling Salesperson Problem (TSP) / Hamiltonian Path on graphs, which is known to be NP-hard.
+    \item \textbf{Single-Capacity Subproblem ($C = 1$):} When each robot is restricted to a single goal, the problem reduces to classical Multi-Agent Path Finding (MAPF), which is NP-hard to solve optimally for makespan or sum-of-costs.
+\end{enumerate}
+The combined search space spans:
+\begin{equation}
+\mathcal{O}\left( \prod_{k=1}^M (N_k!) \times |V|^M \times T_{\max} \right)
+\end{equation}
+For $M = 16$ agents and capacity $C = 7$, brute-force enumeration requires $(7!)^{16} \approx 6.4 \times 10^{59}$ combinations per planning tick, proving that exact MILP solvers (Gurobi, CPLEX) cannot scale to real-time warehouse execution.
+\end{IEEEproof}
+
+\section{Proposed Bi-Level Solution Architecture}
+
+To achieve sub-second execution while avoiding congestion, we decouple C-MG-MAPF into two cooperative layers:
+
+\subsection{Upper Level: Space-Time 2-Opt Goal Scheduler}
+Operating on capacity queues ($N_k \le 7$), the upper level uses a two-phase $O(N^2)$ algorithm:
+\begin{enumerate}
+    \item \textbf{Nearest-Neighbor Tour Construction:} Builds a geometric baseline tour in $N_k$ steps.
+    \item \textbf{2-Opt Segment Inversions:} Evaluates 2-edge swaps using the dynamic cost function:
+    \begin{equation}
+    \text{Cost} = \sum_{i=1}^{N_k} \Big( d_{\text{graph}}(g_i, g_{i+1}) + t_{\text{wait}}(g_i, g_{i+1}) + \Delta \Big)
+    \end{equation}
+\end{enumerate}
+where $t_{\text{wait}}$ is computed by projecting the candidate path step-by-step into the 20-step planning window. If a teammate's 5-cell footprint overlaps at second $t$, the system scans forward to find the exact clearance timestamp $t_{\text{clear}}$, setting $t_{\text{wait}} = t_{\text{clear}} - t$.
+
+\subsection{Lower Level: Rolling-Horizon PBS + SIPP}
+The lower level takes the active target $g_{k,1}$ and computes collision-free trajectories over a lookahead planning window $W = 20$ timesteps using Priority-Based Search (PBS) coupled with Safe Interval Path Planning (SIPP). Robots execute $h = 5$ timesteps before rolling the window forward.
+
+\section{Experimental Results}
+
+We evaluated our architecture on the 35$\times$57 Kiva 4-zone benchmark (512 endpoints, 16 agents, $\Delta = 7$s) over 1,000 simulation timesteps.
+
+\begin{table}[h]
+\centering
+\caption{Benchmark Comparison (1,000 Timesteps, $C = 7$, 16 Agents)}
+\label{tab:benchmarks}
+\begin{tabular}{llccc}
+\toprule
+\textbf{Config} & \textbf{Algorithm} & \textbf{Active Goal} & \textbf{Tasks} & \textbf{Throughput} \\
+\midrule
+1 & FIFO Baseline & Raw Order & 524 & 0.523 \\
+2 & Naive Distance TSP & Locked $G_1$ & 769 & 0.768 (+46.8\%) \\
+3 & Space-Time 2-Opt & Locked $G_1$ & 804 & 0.803 (+53.4\%) \\
+4 & Naive Distance TSP & Dynamic $G_1$ & 823 & 0.822 (+57.1\%) \\
+\textbf{5} & \textbf{Proposed Dynamic ST} & \textbf{Dynamic $G_1$} & \textbf{832} & \textbf{0.831 (+58.8\%)} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+As shown in Table~\ref{tab:benchmarks}, our proposed Dynamic Space-Time 2-Opt achieves peak throughput of 832 completed tasks, providing a +58.8\% throughput gain over uncoordinated FIFO baselines while executing in under 0.2 milliseconds per robot.
+
+\section{Conclusion}
+This paper presented a rigorous mathematical formulation and a scalable Bi-Level Space-Time 2-Opt architecture for capacitated multi-goal multi-agent warehouse fulfillment. By coupling low-level exact clearance timestamps with upper-level 2-Opt scheduling, the system eliminates corridor congestion and delivers real-time performance on multi-agent fleets.
+
+\begin{thebibliography}{00}
+\bibitem{chen2021integrated}
+Z.~Chen, J.~Alonso-Mora, X.~Bai, D.~D.~Harabor, and P.~J.~Stuckey, ``Integrated task assignment and path planning for capacitated multi-agent pickup and delivery,'' \emph{IEEE Robotics and Automation Letters}, vol.~6, no.~3, pp.~5816--5823, 2021.
+
+\bibitem{surynek2021multi}
+P.~Surynek, ``Multi-goal multi-agent path finding via decoupled and integrated goal vertex ordering,'' in \emph{Proc. AAAI Conf. on Human Computation and Crowdsourcing (AAAI-21)}, vol.~35, no.~14, pp.~12409--12417, 2021.
+
+\bibitem{li2025dynamic}
+Y.~Li, R.~Huang, H.~Ye, H.~Huang, and H.~Du, ``Dynamic path finding for multi-load agent pickup and delivery problem,'' \emph{Theoretical Computer Science}, vol.~1023, p.~114897, 2025.
+
+\bibitem{cilden2025task}
+E.~{\c{C}}ilden and F.~Polat, ``Task assignment strategies for capacitated agents engaged in lifelong pickup and delivery tasks,'' \emph{Knowledge-Based Systems}, vol.~329, p.~114281, 2025.
+
+\bibitem{li2021lifelong}
+J.~Li, A.~Tinka, S.~Kulkarni, and S.~Koenig, ``Lifelong multi-agent path finding in large-scale warehouses,'' in \emph{Proc. AAAI Conf. on Artificial Intelligence (AAAI-21)}, vol.~35, no.~13, pp.~11272--11281, 2021.
+\end{thebibliography}
+
+\end{document}

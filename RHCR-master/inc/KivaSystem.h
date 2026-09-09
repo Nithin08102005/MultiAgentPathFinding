@@ -26,6 +26,7 @@ public:
     void setRngSeed(unsigned s)                   { rng_seed = s; }
     void setSafetyMode(bool on)                   { safety_mode = on; }
     void setReorderMode(int m)                    { reorder_mode = m; }
+    void setLockActiveGoal(bool on)               { lock_active_goal = on; }
     void setAutoRefill(bool on)                   { auto_refill = on; }
     void setAvoidDuplicateGoals(bool on)          { avoid_dup_goals = on; }
     void setCapacityDebug(bool on)                { capacity_debug = on; }
@@ -72,6 +73,7 @@ private:
     bool avoid_dup_goals       = true;
     bool capacity_debug        = false;
     int  reorder_mode          = 2; // 0: FIFO, 1: Naive Distance, 2: Fast 2-Opt ST-TSP
+    bool lock_active_goal      = true; // If false, dynamically reorders all goals including Goal 1
 
     // helpers for capacity behavior
     int  cap_of(int k) const;

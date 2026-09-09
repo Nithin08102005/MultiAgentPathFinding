@@ -936,7 +936,41 @@ static inline int get_dist_h(const KivaGrid& G, int u, int v) {
     return G.get_Manhattan_distance(u, target);
 }
 
-static int get_projected_route_space_time_penalty(const KivaGrid& G, std::vector<Path>& paths, int current_agent, int start_loc, int start_ori, int target_raw_v, int start_t, int task_delay, bool consider_rotation)
+static int get_footprint_clearance_time(const KivaGrid& G, const Path& other_path, const int my_footprint[5], int t_collision)
+{
+    const int path_sz = (int)other_path.size();
+    for (int t = t_collision + 1; t < path_sz; ++t)
+    {
+        const State& other_st = other_path[t];
+        int other_footprint[5];
+        G.get_5cell_occupied_cells(other_st.location, other_st.orientation, other_footprint);
+
+        bool still_overlapping = false;
+        for (int mc = 0; mc < 5; ++mc)
+        {
+            if (my_footprint[mc] < 0 || my_footprint[mc] >= (int)G.types.size()) continue;
+            if (G.types[my_footprint[mc]] == "Magic" || G.types[my_footprint[mc]] == "Obstacle") continue;
+
+            for (int oc = 0; oc < 5; ++oc)
+            {
+                if (my_footprint[mc] == other_footprint[oc])
+                {
+                    still_overlapping = true;
+                    break;
+                }
+            }
+            if (still_overlapping) break;
+        }
+
+        if (!still_overlapping)
+        {
+            return t; // Cleared at timestamp t
+        }
+    }
+    return path_sz; // Remains occupied until the end of the known planning window
+}
+
+static int get_projected_route_wait_time(const KivaGrid& G, std::vector<Path>& paths, int current_agent, int start_loc, int start_ori, int target_raw_v, int start_t, int task_delay, bool consider_rotation)
 {
     if (paths.empty()) return 0;
     if (start_t <= 0) return 0; // At timestep 0, no multi-agent paths exist yet
@@ -951,7 +985,7 @@ static int get_projected_route_space_time_penalty(const KivaGrid& G, std::vector
     std::vector<std::pair<int, int>> trajectory; // vector of (location, orientation)
     int curr = start_loc;
     int curr_ori = (start_ori >= 0 && start_ori < 4) ? start_ori : 0;
-    int max_steps = 60; // safety guard to prevent infinite loops
+    int max_steps = 60; // safety guard
 
     trajectory.push_back({curr, curr_ori});
 
@@ -976,34 +1010,37 @@ static int get_projected_route_space_time_penalty(const KivaGrid& G, std::vector
             }
         }
 
-        if (best_next == curr) break; // reached local minimum or target
+        if (best_next == curr) break;
         curr = best_next;
         curr_ori = best_next_ori;
         trajectory.push_back({curr, curr_ori});
     }
 
-    int total_penalty = 0;
+    int total_wait_time = 0;
     const int path_len = (int)trajectory.size();
+    int current_clock = start_t;
 
-    // 1. Check each transit step along the trajectory at its projected timestamp
+    // 1. Check each transit step along the trajectory and compute exact wait time if blocked
     for (int step = 0; step < path_len; ++step)
     {
-        int t = start_t + step;
         int my_loc = trajectory[step].first;
         int my_ori = trajectory[step].second;
 
         int my_footprint[5];
         G.get_5cell_occupied_cells(my_loc, my_ori, my_footprint);
 
+        int max_wait_this_step = 0;
+
         for (int other = 0; other < (int)paths.size(); ++other)
         {
             if (other == current_agent || paths[other].empty()) continue;
-            if (t >= (int)paths[other].size()) continue; // Only check actual planned steps; do NOT guess beyond planned horizon
+            if (current_clock >= (int)paths[other].size()) continue; // Past known horizon
 
-            const State& other_st = paths[other][t];
+            const State& other_st = paths[other][current_clock];
             int other_footprint[5];
             G.get_5cell_occupied_cells(other_st.location, other_st.orientation, other_footprint);
 
+            bool conflict = false;
             for (int mc = 0; mc < 5; ++mc)
             {
                 if (my_footprint[mc] < 0 || my_footprint[mc] >= (int)G.types.size()) continue;
@@ -1013,33 +1050,46 @@ static int get_projected_route_space_time_penalty(const KivaGrid& G, std::vector
                 {
                     if (my_footprint[mc] == other_footprint[oc])
                     {
-                        total_penalty += 15; // real physical footprint obstruction at time t
-                        goto next_step;
+                        conflict = true;
+                        break;
                     }
+                }
+                if (conflict) break;
+            }
+
+            if (conflict)
+            {
+                int t_clear = get_footprint_clearance_time(G, paths[other], my_footprint, current_clock);
+                int wait_needed = t_clear - current_clock;
+                if (wait_needed > max_wait_this_step)
+                {
+                    max_wait_this_step = wait_needed;
                 }
             }
         }
-        next_step:;
+
+        total_wait_time += max_wait_this_step;
+        current_clock += max_wait_this_step + 1; // advance clock by wait time + 1 step movement
     }
 
-    // 2. Check the 7-step dwell window at target_cell
-    int arrival_t = start_t + std::max(0, path_len - 1);
+    // 2. Check the dwell window at target_cell and compute exact wait time if shelf is occupied
     int dwell_steps = (task_delay > 0) ? task_delay : 7;
     int target_footprint[5];
     G.get_5cell_occupied_cells(target_cell, curr_ori, target_footprint);
 
-    for (int dt = 1; dt <= dwell_steps; ++dt)
+    for (int dt = 0; dt < dwell_steps; ++dt)
     {
-        int t = arrival_t + dt;
+        int max_dwell_wait = 0;
         for (int other = 0; other < (int)paths.size(); ++other)
         {
             if (other == current_agent || paths[other].empty()) continue;
-            if (t >= (int)paths[other].size()) continue; // Only check actual planned steps
+            if (current_clock >= (int)paths[other].size()) continue;
 
-            const State& other_st = paths[other][t];
+            const State& other_st = paths[other][current_clock];
             int other_footprint[5];
             G.get_5cell_occupied_cells(other_st.location, other_st.orientation, other_footprint);
 
+            bool conflict = false;
             for (int tc = 0; tc < 5; ++tc)
             {
                 if (target_footprint[tc] < 0 || target_footprint[tc] >= (int)G.types.size()) continue;
@@ -1049,16 +1099,29 @@ static int get_projected_route_space_time_penalty(const KivaGrid& G, std::vector
                 {
                     if (target_footprint[tc] == other_footprint[oc])
                     {
-                        total_penalty += 15;
-                        goto next_dwell_step;
+                        conflict = true;
+                        break;
                     }
+                }
+                if (conflict) break;
+            }
+
+            if (conflict)
+            {
+                int t_clear = get_footprint_clearance_time(G, paths[other], target_footprint, current_clock);
+                int wait_needed = t_clear - current_clock;
+                if (wait_needed > max_dwell_wait)
+                {
+                    max_dwell_wait = wait_needed;
                 }
             }
         }
-        next_dwell_step:;
+
+        total_wait_time += max_dwell_wait;
+        current_clock += max_dwell_wait + 1;
     }
 
-    return total_penalty;
+    return total_wait_time;
 }
 
 static int evaluate_sequence_cost(const KivaGrid& G, std::vector<Path>& paths, int k,
@@ -1067,7 +1130,7 @@ static int evaluate_sequence_cost(const KivaGrid& G, std::vector<Path>& paths, i
                                   int start_v, int start_ori, int current_t,
                                   int task_delay, bool consider_rotation, int reorder_mode)
 {
-    int cost = 0;
+    int total_time = 0;
     int prev_v = start_v;
     int prev_ori = start_ori;
     int projected_t = current_t;
@@ -1075,18 +1138,19 @@ static int evaluate_sequence_cost(const KivaGrid& G, std::vector<Path>& paths, i
 
     for (int i = 0; i < N; ++i) {
         int goal_raw = items[perm[i]].first;
-        int dist = get_dist_h(G, prev_v, goal_raw);
-        int penalty = 0;
+        int driving_dist = get_dist_h(G, prev_v, goal_raw);
+        int wait_time = 0;
 
         if (reorder_mode == 2 && current_t > 0) {
-            penalty = get_projected_route_space_time_penalty(G, paths, k, prev_v, prev_ori, goal_raw, projected_t, task_delay, consider_rotation);
+            wait_time = get_projected_route_wait_time(G, paths, k, prev_v, prev_ori, goal_raw, projected_t, task_delay, consider_rotation);
         }
 
-        cost += dist + penalty;
+        int leg_duration = driving_dist + wait_time + (task_delay > 0 ? task_delay : 7);
+        total_time += leg_duration;
         prev_v = find_exterior_travel_cell_for_endpoint(G, goal_raw);
-        projected_t += dist + (task_delay > 0 ? task_delay : 7);
+        projected_t += leg_duration;
     }
-    return cost;
+    return total_time;
 }
 
 // -------------------------- reorder by DVS (Dynamic Traffic-Aware Distance) --------------------------
@@ -1836,7 +1900,7 @@ void KivaSystem::update_goal_locations()
             bool topped = bundle_maybe_top_up(k);
             bool changed = popped || topped;
 
-            bool allow_full = (popped || timestep == 0);
+            bool allow_full = (popped || timestep == 0 || !lock_active_goal);
             if (safety_mode) { reorder_bundle_by_dvs(k, allow_full); changed = true; }
 
             if (changed) bundle_dirty[k] = true;

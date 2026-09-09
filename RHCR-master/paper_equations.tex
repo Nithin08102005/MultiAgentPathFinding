@@ -1,0 +1,176 @@
+\documentclass[journal]{IEEEtran}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{algorithm}
+\usepackage{bm}
+\usepackage{cite}
+
+\DeclareMathOperator*{\argmin}{arg\,min}
+
+\begin{document}
+
+\title{Mathematical Formulation and Bi-Level Algorithmic Architecture for Kinematic Capacitated Multi-Agent Pickup and Delivery}
+\author{Research Formulation and Algorithmic Specification}
+\maketitle
+
+\section{Problem Formulation}
+\label{sec:problem_formulation}
+
+This section defines the formal mathematical model for the Kinematic Capacitated Multi-Goal Multi-Agent Pathfinding (KC-MG-MAPF) problem, directly grounded on our warehouse simulator and the MTZ-MILP evaluation model.
+
+\subsection{Notation and Parameters}
+We represent the warehouse operational topology as an undirected graph $G = (V, E)$, partitioned into open travel corridors $V_{\text{corridor}}$, storage shelf endpoints $V_{\text{endpoint}}$, static obstacle racks $V_{\text{obstacle}}$, and robot home stations $V_{\text{home}}$.
+
+\begin{itemize}
+    \item $R = \{1, \dots, M\}$: Fleet of $M$ capacitated mobile Automated Guided Vehicles (AGVs).
+    \item $C \in \mathbb{Z}_{\ge 1}$: Maximum payload carrying capacity of each AGV ($C > 1$).
+    \item $\mathcal{T}_k = \{g_{k, 1}, g_{k, 2}, \dots, g_{k, N_k}\} \subset V_{\text{endpoint}}$: Active bundle of $N_k \le C$ assigned shelf picking goals currently managed by robot $k \in R$.
+    \item $s_k \in V$: Current physical center location of robot $k$ at the decision instant.
+    \item $V_k = \{s_k\} \cup \mathcal{T}_k$: Node set comprising the origin and all target goals of robot $k$.
+    \item $d_G(u, v)$: Shortest-path graph distance between nodes $u, v \in V$ avoiding all static obstacle walls $V_{\text{obstacle}}$.
+    \item $\omega_{\text{rot}} = 1.0$\,s: Discrete time delay required to perform an in-place $90^\circ$ turn.
+    \item $\Delta_{\text{dwell}} = 7.0$\,s: Physical loading/unloading dwell service delay at storage shelf endpoints.
+    \item $w, h \in \mathbb{Z}_{\ge 1}$: Rolling planning window ($w$) and simulation execution window ($h$, where $h \le w$).
+    \item $M_{\text{big}}$: Sufficiently large positive scalar used for disjunctive sub-tour elimination.
+\end{itemize}
+
+\subsection{Decision Variables and Physical Footprints}
+\begin{itemize}
+    \item $x_{k, u, v} \in \{0, 1\}$: Binary routing variable; equals $1$ if robot $k$ visits goal $u$ immediately prior to goal $v$, and $0$ otherwise ($\forall k \in R, \, u, v \in V_k, \, u \neq v$).
+    \item $a_k(u) \in \mathbb{R}_{\ge 0}$: Continuous arrival and service initiation timestamp when robot $k$ reaches goal location $u \in \mathcal{T}_k$.
+    \item $p_k(t) \in V$: Discrete spatial center coordinate of robot $k$ at timestep $t \in [0, T_{\max}]$.
+    \item $\theta_k(t) \in \{0, 1, 2, 3\}$: Discrete heading orientation of robot $k$ at timestep $t$ (0: East, 1: South, 2: West, 3: North).
+    \item $\mathcal{F}_{\text{rot}}(p) = \{p + (\Delta r, \Delta c) \mid \Delta r, \Delta c \in \{-1, 0, 1\}\}$: The 9-cell ($3 \times 3$) rotational swept bounding box centered at cell $p$.
+    \item $\mathcal{F}_{\text{chassis}}(p, \theta) = \{p - \vec{e}(\theta), \, p, \, p + \vec{e}(\theta)\}$: The physical 3-cell linear chassis of the AGV oriented along its cardinal heading vector $\vec{e}(\theta)$.
+    \item $\mathcal{F}_{\text{line}}(p, \theta) = \{p - 2\vec{e}(\theta), \, p - \vec{e}(\theta), \, p, \, p + \vec{e}(\theta), \, p + 2\vec{e}(\theta)\}$: The 5-cell longitudinal reservation envelope, comprising the 3-cell chassis plus 1-cell front and rear dynamic safety buffers.
+    \item $\mathcal{F}_{\text{active}}(k, t) \subset V$: Active spatial footprint occupied by robot $k$ at timestep $t$, defined as $\mathcal{F}_{\text{rot}}(p_k(t))$ if executing an in-place turn ($\theta_k(t+1) \neq \theta_k(t)$), and $\mathcal{F}_{\text{line}}(p_k(t), \theta_k(t))$ during translation or dwell.
+\end{itemize}
+
+\subsection{Mathematical Optimization Model}
+The formal problem is formulated as the following Mixed-Integer Program:
+
+\begin{align}
+\min_{\bm{x}, \bm{a}, \bm{p}, \bm{\theta}} \quad & \text{SoC} = \sum_{k \in R} \sum_{u \in \mathcal{T}_k} a_k(u) \label{eq:objective} \\
+\text{s.t.} \quad & \sum_{v \in \mathcal{T}_k} x_{k, s_k, v} = 1, \quad \forall k \in R \label{eq:start_leave} \\
+& \sum_{u \in V_k, u \neq v} x_{k, u, v} = 1, \quad \forall k \in R, \, \forall v \in \mathcal{T}_k \label{eq:goal_enter} \\
+& \sum_{v \in \mathcal{T}_k, v \neq u} x_{k, u, v} \le 1, \quad \forall k \in R, \, \forall u \in \mathcal{T}_k \label{eq:goal_leave} \\
+& a_k(v) \ge a_k(u) + \Delta_{\text{dwell}} + c(u, \theta_k(a_k(u)), v) \nonumber \\
+& \quad \quad - M_{\text{big}} \cdot (1 - x_{k, u, v}), \quad \forall k \in R, \, \forall u, v \in \mathcal{T}_k, \, u \neq v \label{eq:mtz_subtour} \\
+& a_k(v) \ge a_k(s_k) + c(s_k, \theta_k(0), v) \nonumber \\
+& \quad \quad - M_{\text{big}} \cdot (1 - x_{k, s_k, v}), \quad \forall k \in R, \, \forall v \in \mathcal{T}_k \label{eq:start_timing} \\
+& |\mathcal{T}_k| \le C, \quad \forall k \in R \label{eq:capacity_limit} \\
+& \mathcal{F}_{\text{rot}}(p_k(t)) \cap \left( V_{\text{obstacle}} \cup V_{\text{endpoint}} \right) = \emptyset, \nonumber \\
+& \quad \quad \quad \forall t \text{ where } \theta_k(t+1) \neq \theta_k(t), \, \forall k \in R \label{eq:rack_clearance} \\
+& \mathcal{F}_{\text{active}}(k, t) \cap \mathcal{F}_{\text{active}}(w, t) = \emptyset, \quad \forall k \neq w, \, \forall t \ge 0 \label{eq:swept_collision} \\
+& \left( p_k(t), p_k(t+1) \right) \neq \left( p_w(t+1), p_w(t) \right), \quad \forall k \neq w, \, \forall t \ge 0 \label{eq:edge_collision} \\
+& x_{k, u, v} \in \{0, 1\}, \quad \forall k \in R, \, \forall u, v \in V_k, \, u \neq v \label{eq:integrality}
+\end{align}
+
+\subsection{Explanation of Constraints}
+\begin{itemize}
+    \item \textbf{Objective~\eqref{eq:objective}:} Minimizes the Total System Flowtime / Sum of Costs (SoC), representing the aggregate completion timestamps across all active picking operations.
+    \item \textbf{Equations~\eqref{eq:start_leave}--\eqref{eq:goal_leave}:} Enforce tour conservation. Robot $k$ departs its current state $s_k$ to visit an initial target goal, visits every assigned target goal $v \in \mathcal{T}_k$ exactly once, and departs toward at most one subsequent target.
+    \item \textbf{Equations~\eqref{eq:mtz_subtour}--\eqref{eq:start_timing}:} Miller-Tucker-Zemlin (MTZ) sub-tour elimination constraints. Arrival timestamp $a_k(v)$ must be at least arrival timestamp $a_k(u)$ plus the picking dwell service delay ($\Delta_{\text{dwell}}$) and kinematic travel cost $c(u, \theta, v) = d_G(u, v) + \omega_{\text{rot}} \cdot \text{rot}(\theta, \text{dir}(u, v))$, precluding closed loops.
+    \item \textbf{Equation~\eqref{eq:capacity_limit}:} Restricts the instantaneous task bundle size to carrying capacity $C$.
+    \item \textbf{Equation~\eqref{eq:rack_clearance}:} Enforces static rack non-clipping safety: an in-place turn expands the robot footprint to the $3 \times 3$ (9-cell) bounding box $\mathcal{F}_{\text{rot}}$, which is forbidden from intersecting storage racks ($V_{\text{obstacle}}$) or endpoints ($V_{\text{endpoint}}$).
+    \item \textbf{Equation~\eqref{eq:swept_collision}:} Prevents spatial chassis overlap across multi-agent dynamic footprints.
+    \item \textbf{Equation~\eqref{eq:edge_collision}:} Eliminates head-on edge swap collisions.
+\end{itemize}
+
+\section{Bi-Level Algorithmic Architecture}
+\label{sec:algorithms}
+
+Because solving~\eqref{eq:objective}--\eqref{eq:integrality} directly for large warehouses is strongly NP-hard, we decouple the problem into a bi-level architecture:
+\begin{enumerate}
+    \item \textbf{Upper Level (Goal Sequencing):} Space-Time 2-Opt metaheuristic over rolling task queues $\mathcal{T}_k$.
+    \item \textbf{Lower Level (Path Planning):} Priority-Based Search (PBS) with Safe Interval Path Planning (SIPP).
+\end{enumerate}
+
+\begin{algorithm}[t]
+\caption{Bi-Level Rolling-Horizon Lifelong Framework}
+\label{alg:master_framework}
+\begin{algorithmic}[1]
+\REQUIRE Warehouse graph $G$, AGV fleet $R$, Capacity $C$, Windows $w, h$
+\ENSURE Lifelong collision-free task execution
+\STATE Initialize robot positions $p_k(0)$, headings $\theta_k(0)$, queues $\mathcal{T}_k \gets \emptyset$
+\STATE $t \gets 0$
+\WHILE{$t < T_{\max}$}
+    \FORALL{robot $k \in R$}
+        \IF{$|\mathcal{T}_k| < C$ \AND backlog tasks available}
+            \STATE Refill $\mathcal{T}_k$ with available shelf tasks up to capacity $C$
+            \STATE $\mathcal{T}_k^* \gets \textsc{Kinematic2Opt}(p_k(t), \theta_k(t), \mathcal{T}_k)$ \COMMENT{Algorithm~\ref{alg:dynamic_2opt}}
+            \STATE $\mathcal{T}_k \gets \mathcal{T}_k^*$
+        \ENDIF
+    \ENDFOR
+    \STATE $\{\pi_k\}_{k \in R} \gets \textsc{PBS-SweptSolver}(G, R, \{\mathcal{T}_k\}, w)$ \COMMENT{Algorithm~\ref{alg:pbs_solver}}
+    \STATE Execute trajectory steps $t \to t + h$ along $\{\pi_k\}$
+    \STATE Update positions $p_k(t+h)$, headings $\theta_k(t+h)$, and task queues
+    \STATE $t \gets t + h$
+\ENDWHILE
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[t]
+\caption{Dynamic Kinematic Space-Time 2-Opt Goal Sequencing}
+\label{alg:dynamic_2opt}
+\begin{algorithmic}[1]
+\REQUIRE Robot state $\mathbf{s}_k = (p_k, \theta_k)$, Active queue $\mathcal{T}_k = \langle g_1, \dots, g_C \rangle$, Lock $\lambda_{\text{lock}}$
+\ENSURE Optimally sequenced queue $\mathcal{T}_k^*$
+\STATE $\mathcal{T}_k^* \gets \mathcal{T}_k$
+\STATE $J_{\min} \gets \mathcal{J}(\mathcal{T}_k^*, \mathbf{s}_k)$
+\STATE $\mathit{improved} \gets \mathit{true}$
+\WHILE{$\mathit{improved}$}
+    \STATE $\mathit{improved} \gets \mathit{false}$
+    \STATE $i_{\text{start}} \gets (\lambda_{\text{lock}} = 1) \mathbin{?} 2 : 1$
+    \FOR{$i = i_{\text{start}}$ \TO $|\mathcal{T}_k| - 1$}
+        \FOR{$j = i + 1$ \TO $|\mathcal{T}_k|$}
+            \STATE $\mathcal{T}' \gets \langle g_1, \dots, g_{i-1}, \, g_j, \dots, g_i, \, g_{j+1}, \dots, g_C \rangle$
+            \STATE $J_{\text{cand}} \gets \mathcal{J}(\mathcal{T}', \mathbf{s}_k)$
+            \IF{$J_{\text{cand}} < J_{\min} - \epsilon$}
+                \STATE $J_{\min} \gets J_{\text{cand}}$
+                \STATE $\mathcal{T}_k^* \gets \mathcal{T}'$
+                \STATE $\mathit{improved} \gets \mathit{true}$
+            \ENDIF
+        \ENDFOR
+    \ENDFOR
+\ENDWHILE
+\RETURN $\mathcal{T}_k^*$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[t]
+\caption{Priority-Based Search with Swept Clearance (PBS)}
+\label{alg:pbs_solver}
+\begin{algorithmic}[1]
+\REQUIRE Graph $G$, Robot states $\{\mathbf{s}_k\}$, Sequenced queues $\{\mathcal{T}_k^*\}$, Horizon $w$
+\ENSURE Collision-free trajectories $\{\pi_k\}$ over window $w$
+\STATE Initialize Root Node $N_{\text{root}}$ with empty poset $\mathcal{P} \gets \emptyset$
+\FORALL{$k \in R$}
+    \STATE Plan single-agent SIPP path $\pi_k$ satisfying $\mathcal{F}_{\text{rot}}$ clearance
+\ENDFOR
+\STATE $N_{\text{root}}.\pi \gets \{\pi_k\}$, $N_{\text{root}}.\mathcal{P} \gets \emptyset$
+\STATE $\textsc{Open} \gets \{N_{\text{root}}\}$
+\WHILE{$\textsc{Open} \neq \emptyset$}
+    \STATE $N \gets \text{extract node with lowest total travel cost from } \textsc{Open}$
+    \STATE Find first conflict $(k, w, t)$ where $\mathcal{F}_{\text{active}}(k, t) \cap \mathcal{F}_{\text{active}}(w, t) \neq \emptyset$
+    \IF{no conflict exists}
+        \RETURN $N.\pi$ \COMMENT{Feasible conflict-free solution found}
+    \ENDIF
+    \FORALL{priority orientation $(k \prec w)$ and $(w \prec k)$}
+        \STATE Create child node $N'$ with $\mathcal{P}' \gets N.\mathcal{P} \cup \{k \prec w\}$
+        \STATE Replan SIPP trajectory $\pi_w$ respecting $\mathcal{F}_{\text{active}}$ reservations of $k$
+        \IF{path $\pi_w$ is feasible}
+            \STATE Insert $N'$ into $\textsc{Open}$
+        \ENDIF
+    \ENDFOR
+\ENDWHILE
+\RETURN $\textsc{Failure}$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{thebibliography}{00}
+\bibitem{chen2021integrated}
+Z.~Chen, J.~Alonso-Mora, X.~Bai, D.~D.~Harabor, and P.~J.~Stuckey, ``Integrated task assignment and path planning for capacitated multi-agent pickup and delivery,'' \emph{IEEE Robotics and Automation Letters}, vol.~6, no.~3, pp.~5816--5823, 2021.
+\end{thebibliography}
+
+\end{document}

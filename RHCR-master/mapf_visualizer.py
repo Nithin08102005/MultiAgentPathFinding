@@ -865,13 +865,27 @@ Top 8 Robots:
         return anim
 
 def main():
+    import sys
     print("=" * 70)
     print("    GENERALIZED KIVA WAREHOUSE VISUALIZER")
     print("    Automatically adapts to any number of robots")
     print("=" * 70)
     
+    # Default to the latest proposed dynamic run if not specified
+    paths_file = 'exp/bench_st_dynamic/paths.txt'
+    map_file = 'kiva_4zone_shaved.map'
+    
+    if len(sys.argv) > 1:
+        arg = sys.argv[1]
+        if os.path.isdir(_resolve_data_path(arg)):
+            paths_file = os.path.join(arg, 'paths.txt')
+        else:
+            paths_file = arg
+    if len(sys.argv) > 2:
+        map_file = sys.argv[2]
+        
     try:
-        visualizer = GeneralizedKivaVisualizer()
+        visualizer = GeneralizedKivaVisualizer(map_file=map_file, results_file=paths_file)
         visualizer.run()
     except Exception as e:
         print(f"Error: {e}")
