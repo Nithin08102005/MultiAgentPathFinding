@@ -1,0 +1,154 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 820" width="100%" height="100%" style="background:#ffffff; font-family:'Segoe UI', -apple-system, BlinkMacSystemFont, Arial, sans-serif;">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#111827" />
+    </marker>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#2563eb" />
+    </marker>
+  </defs>
+
+  <!-- TOP BOX: TRAFFIC-AWARE CALIBRATION -->
+  <g transform="translate(420, 30)">
+    <rect x="0" y="0" width="360" height="195" rx="6" fill="#f8fafc" stroke="#334155" stroke-width="1.6"/>
+    <text x="180" y="26" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#0f172a">Traffic-Aware Calibration</text>
+    <line x1="20" y1="36" x2="340" y2="36" stroke="#cbd5e1" stroke-width="1"/>
+    <text x="22" y="60" font-size="11.5" fill="#334155">• NN Forward Timeline Simulation:</text>
+    <text x="36" y="80" font-size="11" fill="#475569" font-style="italic">t̂₀ = t_cur</text>
+    <text x="36" y="100" font-size="11" fill="#475569" font-style="italic">t̂_{n+1} = t̂_n + d(π_n, π_{n+1}) + w(π_n, π_{n+1}, t̂_n) + δ</text>
+    <text x="22" y="126" font-size="11.5" fill="#334155">• Dynamic Traffic Delay: w(i, j, t̂_i)</text>
+    <text x="22" y="152" font-size="11.5" fill="#334155">• Time-Calibrated Edge Cost:</text>
+    <text x="36" y="172" font-size="12" font-weight="600" fill="#1e293b">c_ij = d(i, j) + w(i, j, t̂_i) + δ</text>
+  </g>
+
+  <!-- Top down connector -->
+  <line x1="600" y1="225" x2="600" y2="258" stroke="#334155" stroke-width="1.5" stroke-dasharray="3,3" marker-end="url(#arrow)"/>
+  <text x="608" y="246" font-size="11" font-style="italic" fill="#475569">Calibrated c_ij</text>
+
+  <!-- LEFT BOX 1: WAREHOUSE & FLEET PARAMETERS -->
+  <g transform="translate(40, 175)">
+    <rect x="0" y="0" width="310" height="195" rx="6" fill="#ffffff" stroke="#1e293b" stroke-width="1.6"/>
+    <text x="155" y="26" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#0f172a">Warehouse &amp; Fleet Parameters</text>
+    <line x1="18" y1="36" x2="292" y2="36" stroke="#e2e8f0" stroke-width="1"/>
+    <text x="20" y="62" font-size="11.5" fill="#334155">• 4-Zone Topological Map G = (V, E)</text>
+    <text x="20" y="86" font-size="11.5" fill="#334155">• Carrying Capacity: C = 5 tasks / robot</text>
+    <text x="20" y="110" font-size="11.5" fill="#334155">• Planning Window: w = 20, Step Δt</text>
+    <text x="20" y="134" font-size="11.5" fill="#334155">• Task Dwell Service Delay: δ = 4 s</text>
+    <text x="20" y="158" font-size="11.5" fill="#334155">• Kinematic Footprint: 5-cell chassis</text>
+    <text x="20" y="180" font-size="11.5" fill="#334155">• In-Place Rotations: 9-cell swept envelope</text>
+  </g>
+
+  <!-- LEFT BOX 2: ROBOT STATES -->
+  <g transform="translate(40, 420)">
+    <rect x="0" y="0" width="310" height="185" rx="6" fill="#ffffff" stroke="#1e293b" stroke-width="1.6"/>
+    <text x="155" y="26" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#0f172a">Robot States (i = 1, ..., M)</text>
+    <line x1="18" y1="36" x2="292" y2="36" stroke="#e2e8f0" stroke-width="1"/>
+    <text x="20" y="64" font-size="11.5" fill="#334155">• Current Pose: s_i(t) = ⟨p_i(t), θ_i(t)⟩</text>
+    <text x="20" y="90" font-size="11.5" fill="#334155">• Active Goal Bundle: G_i = {g₁, ..., g_N}</text>
+    <text x="20" y="116" font-size="11.5" fill="#334155">• Goal Commitment Lock: lock_active_goal</text>
+    <text x="20" y="142" font-size="11.5" fill="#334155">• Space-Time Reservation Table</text>
+    <text x="20" y="168" font-size="11.5" fill="#334155">• Dynamic Refill Queue Status</text>
+  </g>
+
+  <!-- Branching line from left to core -->
+  <line x1="350" y1="272" x2="375" y2="272" stroke="#111827" stroke-width="1.5"/>
+  <line x1="350" y1="512" x2="375" y2="512" stroke="#111827" stroke-width="1.5"/>
+  <line x1="375" y1="272" x2="375" y2="512" stroke="#111827" stroke-width="1.5"/>
+  <line x1="375" y1="340" x2="395" y2="340" stroke="#111827" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="375" y1="490" x2="395" y2="490" stroke="#111827" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- UPPER-LEVEL TASK SEQUENCING CONTAINER -->
+  <rect x="395" y="260" width="395" height="360" rx="8" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.4" stroke-dasharray="4,4"/>
+  <text x="592" y="285" text-anchor="middle" font-size="13" font-weight="bold" fill="#475569" letter-spacing="0.5">UPPER-LEVEL TASK SEQUENCING</text>
+
+  <!-- Box A: Exact MILP -->
+  <g transform="translate(415, 305)">
+    <rect x="0" y="0" width="355" height="125" rx="5" fill="#ffffff" stroke="#2563eb" stroke-width="1.8"/>
+    <text x="177" y="24" text-anchor="middle" font-size="13" font-weight="bold" fill="#1d4ed8">Exact MILP-Based TRP (Mode 3)</text>
+    <line x1="15" y1="34" x2="340" y2="34" stroke="#dbeafe" stroke-width="1"/>
+    <text x="20" y="58" font-size="11.5" fill="#334155">• Objective: Min Cumulative Latency min Σ T_j</text>
+    <text x="20" y="82" font-size="11.5" fill="#334155">• Big-M Subtour Elimination &amp; Time Propagation</text>
+    <text x="20" y="106" font-size="11.5" fill="#334155">• Globally Optimal Delivery Ordering π*</text>
+  </g>
+
+  <!-- "Or" text -->
+  <text x="592" y="456" text-anchor="middle" font-size="13" font-weight="bold" fill="#64748b">— Or —</text>
+
+  <!-- Box B: Space-Time 2-Opt -->
+  <g transform="translate(415, 475)">
+    <rect x="0" y="0" width="355" height="125" rx="5" fill="#ffffff" stroke="#475569" stroke-width="1.6"/>
+    <text x="177" y="24" text-anchor="middle" font-size="13" font-weight="bold" fill="#334155">Space-Time 2-Opt TSP (Mode 2)</text>
+    <line x1="15" y1="34" x2="340" y2="34" stroke="#e2e8f0" stroke-width="1"/>
+    <text x="20" y="58" font-size="11.5" fill="#334155">• Heuristic Local Search Baseline</text>
+    <text x="20" y="82" font-size="11.5" fill="#334155">• Greedy Nearest-Neighbor (NN) Seeding</text>
+    <text x="20" y="106" font-size="11.5" fill="#334155">• Dynamic Space-Time Conflict Edge Swaps</text>
+  </g>
+
+  <!-- Connectors to Dispatcher -->
+  <path d="M 770 367 L 820 405" fill="none" stroke="#2563eb" stroke-width="1.6" stroke-dasharray="4,3" marker-end="url(#arrow-blue)"/>
+  <path d="M 770 537 L 820 445" fill="none" stroke="#475569" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- TASK DISPATCHER -->
+  <g transform="translate(825, 385)">
+    <rect x="0" y="0" width="125" height="95" rx="6" fill="#ffffff" stroke="#1e293b" stroke-width="1.6"/>
+    <text x="62" y="32" text-anchor="middle" font-size="13" font-weight="bold" fill="#0f172a">Task</text>
+    <text x="62" y="52" text-anchor="middle" font-size="13" font-weight="bold" fill="#0f172a">Dispatcher</text>
+    <line x1="15" y1="62" x2="110" y2="62" stroke="#e2e8f0" stroke-width="1"/>
+    <text x="62" y="80" text-anchor="middle" font-size="10.5" fill="#64748b">Sequence π*</text>
+  </g>
+
+  <!-- Connector to MAPF -->
+  <line x1="950" y1="432" x2="990" y2="432" stroke="#111827" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="970" y="422" text-anchor="middle" font-size="11" font-style="italic" fill="#1e3a8a">Order π*</text>
+
+  <!-- LOWER-LEVEL MAPF ENGINE -->
+  <g transform="translate(995, 335)">
+    <rect x="0" y="0" width="185" height="200" rx="6" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.8"/>
+    <text x="92" y="24" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1e3a8a">LOWER-LEVEL MAPF</text>
+    <text x="92" y="42" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#1d4ed8">Rolling-Horizon (RHCR)</text>
+    <line x1="12" y1="52" x2="173" y2="52" stroke="#bfdbfe" stroke-width="1"/>
+    <text x="14" y="74" font-size="11" fill="#1e293b">• Priority-Based Search (PBS)</text>
+    <text x="14" y="98" font-size="11" fill="#1e293b">• Safe Interval Path Planning</text>
+    <text x="14" y="122" font-size="11" fill="#1e293b">• Swept Rotational Kinematics</text>
+    <text x="14" y="146" font-size="11" fill="#1e293b">• Dynamic Window Restitching</text>
+    <text x="14" y="170" font-size="11" fill="#1e293b">• 100% Conflict-Free Paths</text>
+  </g>
+
+  <!-- Connector from MAPF down to Robots -->
+  <line x1="1087" y1="535" x2="1087" y2="575" stroke="#111827" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="1102" y="560" font-size="10.5" font-weight="bold" fill="#1d4ed8">Collision-Free Paths</text>
+
+  <!-- LAYERED ROBOT FLEET CARDS -->
+  <g transform="translate(1020, 580)">
+    <!-- Card M -->
+    <rect x="24" y="0" width="155" height="120" rx="5" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.2"/>
+    <text x="101" y="22" text-anchor="middle" font-size="11" font-weight="bold" fill="#94a3b8">Robot M</text>
+    <!-- Card 2 -->
+    <rect x="12" y="14" width="155" height="120" rx="5" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.2"/>
+    <text x="89" y="36" text-anchor="middle" font-size="11" font-weight="bold" fill="#64748b">Robot 2</text>
+    <!-- Card 1 -->
+    <rect x="0" y="28" width="165" height="145" rx="5" fill="#ffffff" stroke="#1e293b" stroke-width="1.6"/>
+    <text x="82" y="48" text-anchor="middle" font-size="12" font-weight="bold" fill="#0f172a">Robot 1 (AGV Fleet)</text>
+    <line x1="12" y1="56" x2="153" y2="56" stroke="#e2e8f0" stroke-width="1"/>
+    <text x="12" y="78" font-size="10.5" fill="#334155">• Execute Safe Interval Path</text>
+    <text x="12" y="98" font-size="10.5" fill="#334155">• Pose Update: ⟨p_i, θ_i⟩ at tick</text>
+    <text x="12" y="118" font-size="10.5" fill="#334155">• Shelf Picking Dwell (δ)</text>
+    <text x="12" y="138" font-size="10.5" fill="#334155">• Queue Refill on Delivery</text>
+    <text x="12" y="158" font-size="11" font-weight="bold" fill="#15803d">★ 524 Tasks (+4.0% vs 2-Opt)</text>
+  </g>
+
+  <!-- RECEDING HORIZON FEEDBACK LOOP -->
+  <line x1="1102" y1="755" x2="1102" y2="780" stroke="#111827" stroke-width="1.5"/>
+  <line x1="1102" y1="780" x2="840" y2="780" stroke="#111827" stroke-width="1.5"/>
+
+  <g transform="translate(350, 765)">
+    <rect x="0" y="0" width="480" height="30" rx="4" fill="#ffffff" stroke="#64748b" stroke-width="1.2"/>
+    <text x="240" y="20" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#0f172a">
+      Receding Horizon Loop: Update state &amp; reoptimize at each planning window w
+    </text>
+  </g>
+
+  <line x1="350" y1="780" x2="195" y2="780" stroke="#111827" stroke-width="1.5"/>
+  <line x1="195" y1="780" x2="195" y2="605" stroke="#111827" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+</svg>

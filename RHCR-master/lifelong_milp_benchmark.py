@@ -341,6 +341,33 @@ def solve_2opt(cur_pos, goal_list, graph):
     reordered_goals = [goal_list[idx] for idx in perm]
     return reordered_goals, runtime
 
+# =============================================================================
+# UNIFIED HIGH-LEVEL GOAL REORDERING DISPATCHER
+# Supports selecting either "MILP" or "2OPT" via a single variable or CLI flag
+# =============================================================================
+
+DEFAULT_REORDER_SOLVER = "2OPT"  # Options: "2OPT", "MILP", "FIFO"
+
+def reorder_goals(cur_pos, goal_list, graph, solver_type="2OPT"):
+    """
+    Unified High-Level Goal Reordering Interface.
+    Inputs:
+        cur_pos: Current robot grid coordinate (r, c)
+        goal_list: Active list of goals to visit [(r1, c1), (r2, c2), ...]
+        graph: Map BFS distance graph
+        solver_type: "MILP" (Exact MTZ via PuLP/CBC), "2OPT" (Fast 2-Opt), or "FIFO"
+    Returns:
+        (reordered_goals, solve_time_seconds)
+    """
+    if len(goal_list) <= 1 or solver_type == "FIFO":
+        return goal_list, 0.0
+    elif solver_type in ("MILP", "EXACT_MILP"):
+        return solve_exact_milp(cur_pos, goal_list, graph)
+    elif solver_type == "2OPT":
+        return solve_2opt(cur_pos, goal_list, graph)
+    else:
+        return goal_list, 0.0
+
 # -------------------------------------------------------------
 # 4. Lifelong Simulation Engine (Zero Collisions Guaranteed)
 # -------------------------------------------------------------
@@ -373,10 +400,7 @@ def run_lifelong_simulation(mode_name, grid, rows, cols, zone_endpoints,
     queues = {}
     for k in range(4):
         queues[k] = [task_backlog[k].pop(0) for _ in range(capacity)]
-        if mode_name == "EXACT_MILP":
-            queues[k], _ = solve_exact_milp(positions[k], queues[k], graph)
-        elif mode_name == "2OPT":
-            queues[k], _ = solve_2opt(positions[k], queues[k], graph)
+        queues[k], _ = reorder_goals(positions[k], queues[k], graph, solver_type=mode_name)
             
     res_table = SpaceTimeReservationTable(grid, rows, cols)
     
@@ -419,12 +443,8 @@ def run_lifelong_simulation(mode_name, grid, rows, cols, zone_endpoints,
                         
                     if len(queues[k]) > 1:
                         solver_invocations += 1
-                        if mode_name == "EXACT_MILP":
-                            queues[k], s_time = solve_exact_milp(positions[k], queues[k], graph)
-                            total_solver_time += s_time
-                        elif mode_name == "2OPT":
-                            queues[k], s_time = solve_2opt(positions[k], queues[k], graph)
-                            total_solver_time += s_time
+                        queues[k], s_time = reorder_goals(positions[k], queues[k], graph, solver_type=mode_name)
+                        total_solver_time += s_time
                             
                     planned_trajectories[k] = []
                     
@@ -515,11 +535,14 @@ def main():
     parser.add_argument("--capacity", type=int, default=2, help="Robot task capacity (default: 2)")
     parser.add_argument("--task_delay", type=int, default=7, help="Pick dwell delay in seconds (default: 7)")
     parser.add_argument("--seed", type=int, default=0, help="Random seed (default: 0)")
+    parser.add_argument("--solver", type=str, default=DEFAULT_REORDER_SOLVER, choices=["MILP", "2OPT", "FIFO", "ALL"],
+                        help="High-level goal reordering solver: MILP, 2OPT, FIFO, or ALL (default: %(default)s)")
     args = parser.parse_args()
     
     print("=" * 85)
     print(f"  MULTI-AGENT LIFELONG SIMULATION (ZERO COLLISIONS GUARANTEED)")
     print(f"  Map: kiva_4zone_shaved.map (35x57) | 4 Robots | Capacity: {args.capacity} | Dwell: {args.task_delay}s | Horizon: {args.sim_time}s")
+    print(f"  Selected High-Level Goal Reordering Solver: {args.solver}")
     print("=" * 85)
     
     grid, rows, cols = load_kiva_map("kiva_4zone_shaved.map")
@@ -535,54 +558,75 @@ def main():
                 z = (0 if r < 18 else 2) + (0 if c < 29 else 1)
                 zone_endpoints[z].append((r, c))
                 
-    print("\nRunning Lifelong Simulations with Full Space-Time Collision Avoidance...")
-    
-    # 1. FIFO Mode
-    print("\n[1/3] Simulating Mode 0: FIFO Baseline...")
-    t0 = time.time()
-    res_fifo = run_lifelong_simulation("FIFO", grid, rows, cols, zone_endpoints, 
-                                       args.sim_time, args.capacity, args.task_delay, args.seed)
-    print(f"      Finished in {time.time()-t0:.2f}s -> {res_fifo['completed_tasks']} tasks")
-    
-    # 2. Exact MILP Mode
-    print("\n[2/3] Simulating Mode 1: Exact Mathematical MILP...")
-    t0 = time.time()
-    res_milp = run_lifelong_simulation("EXACT_MILP", grid, rows, cols, zone_endpoints, 
-                                       args.sim_time, args.capacity, args.task_delay, args.seed)
-    print(f"      Finished in {time.time()-t0:.2f}s -> {res_milp['completed_tasks']} tasks -> Saved to exp/bench_4ag_exact_milp/paths.txt")
-    
-    # 3. 2-Opt Mode
-    print("\n[3/3] Simulating Mode 2: Proposed 2-Opt Optimizer...")
-    t0 = time.time()
-    res_2opt = run_lifelong_simulation("2OPT", grid, rows, cols, zone_endpoints, 
-                                       args.sim_time, args.capacity, args.task_delay, args.seed)
-    print(f"      Finished in {time.time()-t0:.2f}s -> {res_2opt['completed_tasks']} tasks -> Saved to exp/bench_4ag_2opt/paths.txt")
-    
-    # Master Table
-    print("\n" + "=" * 85)
-    print(f"   FULL MULTI-AGENT LIFELONG RESULTS (100% COLLISION-FREE)")
-    print("=" * 85)
-    print(f"{'Configuration / Algorithm':<28} | {'Completed Tasks':<16} | {'Throughput':<12} | {'Improvement':<12} | {'Avg Solve Time':<15}")
-    print("-" * 85)
-    
-    base_tasks = res_fifo['completed_tasks']
-    milp_tasks = res_milp['completed_tasks']
-    opt_tasks = res_2opt['completed_tasks']
-    
-    imp_milp = ((milp_tasks - base_tasks) / base_tasks) * 100 if base_tasks > 0 else 0
-    imp_2opt = ((opt_tasks - base_tasks) / base_tasks) * 100 if base_tasks > 0 else 0
-    
-    milp_time_str = f"{res_milp['avg_solve_time_ms']:.2f} ms"
-    opt_time_str = f"{res_2opt['avg_solve_time_ms']:.4f} ms"
-    
-    print(f"{'1. FIFO Baseline':<28} | {res_fifo['completed_tasks']:<16} | {res_fifo['throughput']:<12.3f} | {'Baseline':<12} | {'0.000 ms':<15}")
-    print(f"{'2. Exact Mathematical MILP':<28} | {milp_tasks:<16} | {res_milp['throughput']:<12.3f} | {f'+{imp_milp:.1f}%':<12} | {milp_time_str:<15}")
-    print(f"{'3. Proposed 2-Opt Optimizer':<28} | {opt_tasks:<16} | {res_2opt['throughput']:<12.3f} | {f'+{imp_2opt:.1f}%':<12} | {opt_time_str:<15}")
-    print("=" * 85)
-    
-    speedup = res_milp['avg_solve_time_ms'] / res_2opt['avg_solve_time_ms'] if res_2opt['avg_solve_time_ms'] > 0 else float('inf')
-    print(f"\n>> SPEEDUP FACTOR: 2-Opt is {speedup:.1f}x FASTER per decision than Exact MILP Solver!")
-    print(f">> ZERO COLLISIONS: Vertex & edge collisions strictly avoided across all {args.sim_time} seconds!")
+    if args.solver == "ALL":
+        print("\nRunning Lifelong Simulations for ALL solvers with Full Space-Time Collision Avoidance...")
+        
+        # 1. FIFO Mode
+        print("\n[1/3] Simulating Mode 0: FIFO Baseline...")
+        t0 = time.time()
+        res_fifo = run_lifelong_simulation("FIFO", grid, rows, cols, zone_endpoints, 
+                                           args.sim_time, args.capacity, args.task_delay, args.seed)
+        print(f"      Finished in {time.time()-t0:.2f}s -> {res_fifo['completed_tasks']} tasks")
+        
+        # 2. Exact MILP Mode
+        print("\n[2/3] Simulating Mode 1: Exact Mathematical MILP...")
+        t0 = time.time()
+        res_milp = run_lifelong_simulation("EXACT_MILP", grid, rows, cols, zone_endpoints, 
+                                           args.sim_time, args.capacity, args.task_delay, args.seed)
+        print(f"      Finished in {time.time()-t0:.2f}s -> {res_milp['completed_tasks']} tasks -> Saved to exp/bench_4ag_exact_milp/paths.txt")
+        
+        # 3. 2-Opt Mode
+        print("\n[3/3] Simulating Mode 2: Proposed 2-Opt Optimizer...")
+        t0 = time.time()
+        res_2opt = run_lifelong_simulation("2OPT", grid, rows, cols, zone_endpoints, 
+                                           args.sim_time, args.capacity, args.task_delay, args.seed)
+        print(f"      Finished in {time.time()-t0:.2f}s -> {res_2opt['completed_tasks']} tasks -> Saved to exp/bench_4ag_2opt/paths.txt")
+        
+        # Master Table
+        print("\n" + "=" * 85)
+        print(f"   FULL MULTI-AGENT LIFELONG RESULTS (100% COLLISION-FREE)")
+        print("=" * 85)
+        print(f"{'Configuration / Algorithm':<28} | {'Completed Tasks':<16} | {'Throughput':<12} | {'Improvement':<12} | {'Avg Solve Time':<15}")
+        print("-" * 85)
+        
+        base_tasks = res_fifo['completed_tasks']
+        milp_tasks = res_milp['completed_tasks']
+        opt_tasks = res_2opt['completed_tasks']
+        
+        imp_milp = ((milp_tasks - base_tasks) / base_tasks) * 100 if base_tasks > 0 else 0
+        imp_2opt = ((opt_tasks - base_tasks) / base_tasks) * 100 if base_tasks > 0 else 0
+        
+        milp_time_str = f"{res_milp['avg_solve_time_ms']:.2f} ms"
+        opt_time_str = f"{res_2opt['avg_solve_time_ms']:.4f} ms"
+        
+        print(f"{'1. FIFO Baseline':<28} | {res_fifo['completed_tasks']:<16} | {res_fifo['throughput']:<12.3f} | {'Baseline':<12} | {'0.000 ms':<15}")
+        print(f"{'2. Exact Mathematical MILP':<28} | {milp_tasks:<16} | {res_milp['throughput']:<12.3f} | {f'+{imp_milp:.1f}%':<12} | {milp_time_str:<15}")
+        print(f"{'3. Proposed 2-Opt Optimizer':<28} | {opt_tasks:<16} | {res_2opt['throughput']:<12.3f} | {f'+{imp_2opt:.1f}%':<12} | {opt_time_str:<15}")
+        print("=" * 85)
+        
+        speedup = res_milp['avg_solve_time_ms'] / res_2opt['avg_solve_time_ms'] if res_2opt['avg_solve_time_ms'] > 0 else float('inf')
+        print(f"\n>> SPEEDUP FACTOR: 2-Opt is {speedup:.1f}x FASTER per decision than Exact MILP Solver!")
+        print(f">> ZERO COLLISIONS: Vertex & edge collisions strictly avoided across all {args.sim_time} seconds!")
+    else:
+        # Run selected single solver
+        mode_map = {"MILP": "EXACT_MILP", "2OPT": "2OPT", "FIFO": "FIFO"}
+        selected_mode = mode_map[args.solver]
+        print(f"\nRunning Lifelong Simulation with solver: {args.solver} ({selected_mode})...")
+        t0 = time.time()
+        res = run_lifelong_simulation(selected_mode, grid, rows, cols, zone_endpoints,
+                                      args.sim_time, args.capacity, args.task_delay, args.seed)
+        elapsed = time.time() - t0
+        print("\n" + "=" * 85)
+        print(f"   SIMULATION COMPLETE: SOLVER = {args.solver}")
+        print("=" * 85)
+        print(f"Completed Tasks      : {res['completed_tasks']} tasks")
+        print(f"Overall Throughput   : {res['throughput']:.3f} tasks/sec")
+        print(f"Total Travel Steps   : {res['travel_steps']} steps")
+        print(f"Total Wait Steps     : {res['wait_steps']} steps (zero collisions)")
+        print(f"Solver Invocations   : {res['solver_invocations']} decisions")
+        print(f"Average Solve Time   : {res['avg_solve_time_ms']:.4f} ms per decision")
+        print(f"Total Wall-Clock Time: {elapsed:.2f} seconds")
+        print("=" * 85)
 
 if __name__ == '__main__':
     main()

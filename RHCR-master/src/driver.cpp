@@ -138,7 +138,7 @@ int main(int argc, char** argv)
 		("capacity_mode", po::value<bool>()->default_value(true), "enable capacity mode")
 		("capacity", po::value<int>()->default_value(3), "robot capacity")
 		("safety_mode", po::value<bool>()->default_value(true), "enable safety reordering")
-		("reorder_mode", po::value<int>()->default_value(2), "goal reorder mode (0: FIFO, 1: Naive Distance, 2: Fast 2-Opt ST-TSP)")
+		("reorder_mode", po::value<int>()->default_value(2), "goal reorder mode (0: FIFO, 1: Naive Distance, 2: Fast 2-Opt ST-TSP, 3: Exact MTZ-MILP)")
 		("lock_active_goal", po::value<bool>()->default_value(true), "lock active goal during transit")
 		;
 	clock_t start_time = clock();
@@ -207,6 +207,10 @@ int main(int argc, char** argv)
 			system.setLockActiveGoal(vm["lock_active_goal"].as<bool>());
 		G.preprocessing(system.consider_rotation);
 		system.simulate(vm["simulation_time"].as<int>());
+		double total_wall_clock = (double)(clock() - start_time) / CLOCKS_PER_SEC;
+		std::cout << "\n=======================================================" << std::endl;
+		std::cout << " Overall Simulation Wall-Clock Runtime (Start to End): " << total_wall_clock << " seconds" << std::endl;
+		std::cout << "=======================================================\n" << std::endl;
 		return 0;
 	}
 	else if (vm["scenario"].as<string>() == "SORTING")

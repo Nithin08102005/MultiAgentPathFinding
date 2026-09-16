@@ -1,0 +1,127 @@
+\documentclass[border=5pt]{standalone}
+\usepackage{tikz}
+\usepackage{amsmath,amssymb}
+\usetikzlibrary{shapes,arrows,positioning,fit,backgrounds,calc}
+
+\begin{document}
+\begin{tikzpicture}[
+    auto,
+    >=latex',
+    box/.style={draw, rectangle, rounded corners=2pt, fill=white, text width=3.8cm, minimum height=1.6cm, align=left, font=\scriptsize, inner sep=5pt},
+    optbox/.style={draw, rectangle, rounded corners=2pt, fill=white, text width=3.4cm, minimum height=1.2cm, align=center, font=\scriptsize, inner sep=4pt},
+    enginebox/.style={draw=blue!70!black, fill=blue!5, rectangle, rounded corners=2pt, text width=3.8cm, minimum height=2.2cm, align=left, font=\scriptsize, inner sep=5pt},
+    robotbox/.style={draw, rectangle, rounded corners=2pt, fill=white, text width=3.3cm, minimum height=1.8cm, align=left, font=\scriptsize, inner sep=4pt},
+    line/.style={draw, -latex', thick},
+    dashedline/.style={draw, -latex', thick, dashed}
+]
+
+    % --- Top: Traffic Calibration Box ---
+    \node [box, fill=gray!5, text width=5.2cm] (traffic) at (5.5, 3.8) {
+        \textbf{\centering Traffic-Aware Calibration\par\smallskip}
+        \hrule\vspace{3pt}
+        $\bullet$ NN Sequential Forward Simulation:\\
+        \quad $\hat{t}_0 = t_{\text{cur}}, \; \hat{t}_{n+1} = \hat{t}_n + d + w + \delta$\\
+        $\bullet$ Dynamic Traffic Delay: $w(i, j, \hat{t}_i)$\\
+        $\bullet$ Calibrated Edge Cost: $c_{ij} = d(i, j) + w(i, j, \hat{t}_i) + \delta$
+    };
+
+    % --- Left: Parameter and State Boxes ---
+    \node [box] (fleet) at (0, 1.8) {
+        \textbf{\centering Warehouse Fleet Parameters\par\smallskip}
+        \hrule\vspace{3pt}
+        $\bullet$ Map Topology $G=(V, E)$\\
+        $\bullet$ Capacity: $C = 5$ tasks\\
+        $\bullet$ Window: $w = 20$, Step $\Delta t$\\
+        $\bullet$ Task Dwell Delay: $\delta = 4\,\text{s}$\\
+        $\bullet$ 5-cell chassis, $90^\circ$ turns
+    };
+
+    \node [box] (states) at (0, -1.5) {
+        \textbf{\centering Robot States ($i = 1, \dots, M$)\par\smallskip}
+        \hrule\vspace{3pt}
+        $\bullet$ Pose $s_i(t) = \langle p_i(t), \theta_i(t) \rangle$\\
+        $\bullet$ Active Goal Bundle $\mathcal{G}_i = \{g_1, \ldots, g_N\}$\\
+        $\bullet$ Active Goal Lock: \texttt{lock\_active\_goal}\\
+        $\bullet$ Reservation Table \& Queue Status
+    };
+
+    % --- Center: Upper-Level Task Sequencing Core ---
+    \node [optbox, draw=blue!80!black] (milp) at (5.5, 1.4) {
+        \textbf{\color{blue!80!black}Exact MILP-Based TRP}\\
+        \textbf{Mode 3 (Proposed)}\\[2pt]
+        $\min \sum_{j=1}^N T_j$\\
+        \tiny Big-M MTZ Subtour Elimination (CBC)
+    };
+
+    \node at (5.5, 0.4) {\textbf{Or}};
+
+    \node [optbox, draw=black!80] (twoopt) at (5.5, -0.6) {
+        \textbf{Space-Time 2-Opt TSP}\\
+        \textbf{Mode 2 (Local Search)}\\[2pt]
+        Greedy NN Seeding\\
+        \tiny Dynamic Space-Time Edge Swaps
+    };
+
+    % Surrounding container for optimization core
+    \begin{scope}[on background layer]
+        \node [draw=gray!60, dashed, fill=gray!8, rounded corners=4pt, fit=(milp) (twoopt), inner sep=8pt, label={[font=\scriptsize\bfseries, text=gray!70!black]above:UPPER-LEVEL TASK SEQUENCING}] (optcore) {};
+    \end{scope}
+
+    % --- Task Dispatcher ---
+    \node [draw, rectangle, rounded corners=2pt, fill=white, text width=1.8cm, minimum height=1.3cm, align=center, font=\scriptsize] (dispatcher) at (9.0, 0.4) {
+        \textbf{Task\\Dispatcher}\\[2pt]
+        \tiny Sequence $\pi^*$
+    };
+
+    % --- Right: Lower-Level MAPF Engine ---
+    \node [enginebox] (mapf) at (12.8, 0.4) {
+        \textbf{\centering\color{blue!80!black}LOWER-LEVEL MAPF ENGINE\par}
+        \textbf{\centering Rolling-Horizon (RHCR)\par\smallskip}
+        \hrule\vspace{3pt}
+        $\bullet$ Priority-Based Search (PBS)\\
+        $\bullet$ Safe Interval Path Planning (SIPP)\\
+        $\bullet$ 9-Cell Swept Rotational Kinematics\\
+        $\bullet$ Incremental Window Restitching
+    };
+
+    % --- Bottom Right: Layered Robot Cards ---
+    \node [robotbox, fill=gray!15, draw=gray!50] (robot3) at (13.2, -2.9) {\textbf{Robot $M$}};
+    \node [robotbox, fill=gray!8, draw=gray!70] (robot2) at (13.0, -3.1) {\textbf{Robot 2}};
+    \node [robotbox] (robot1) at (12.8, -3.3) {
+        \textbf{Robot 1 (AGV Fleet)}\par\smallskip
+        \hrule\vspace{2pt}
+        $\bullet$ Trajectory Execution\\
+        $\bullet$ Update Pose: $\langle p_i, \theta_i \rangle$ at $t$\\
+        $\bullet$ Shelf Dwell Delay ($\delta$)\\
+        $\bullet$ Task Completion \& Queue Refill\\
+        \textbf{\color{green!50!black}524 Tasks (+4.0\% vs 2-Opt)}
+    };
+
+    % --- Connections & Arrows ---
+    % Calibration to core
+    \path [dashedline] (traffic) -- node [right, font=\tiny\itshape] {Calibrated $c_{ij}$} (optcore);
+
+    % Inputs to core
+    \draw [thick] (fleet.east) -- ++(0.5,0) coordinate (fork1);
+    \draw [thick] (states.east) -- ++(0.5,0) coordinate (fork2);
+    \draw [thick] (fork1) -- (fork2);
+    \path [line] ($(fork1)!0.3!(fork2)$) -- (optcore.west |- milp.west);
+    \path [line] ($(fork1)!0.7!(fork2)$) -- (optcore.west |- twoopt.west);
+
+    % Core to Dispatcher
+    \path [line, draw=blue!80!black, dashed] (milp.east) -- node [above, font=\tiny\color{blue!80!black}] {$\pi^*$} (dispatcher.north west);
+    \path [line] (twoopt.east) -- (dispatcher.south west);
+
+    % Dispatcher to MAPF
+    \path [line] (dispatcher) -- node [above, font=\tiny\itshape] {Order $\pi^*$} (mapf);
+
+    % MAPF to Robots
+    \path [line] (mapf) -- node [right, font=\scriptsize\bfseries] {Collision-Free Paths} (robot3.north -| mapf);
+
+    % Receding horizon feedback loop
+    \draw [thick] (robot1.south) -- ++(0, -0.6) coordinate (fdbk1);
+    \draw [thick] (fdbk1) -- node [above, font=\scriptsize\bfseries] {Receding Horizon Loop: Update state and reoptimize at each planning window $w$} (fdbk1 -| states.south) coordinate (fdbk2);
+    \path [line] (fdbk2) -- (states.south);
+
+\end{tikzpicture}
+\end{document}

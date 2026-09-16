@@ -1,0 +1,169 @@
+\documentclass[10pt, twocolumn]{article}
+\usepackage{amsmath, amssymb, booktabs, array, tabularx}
+\usepackage[margin=0.75in, columnsep=0.25in]{geometry}
+\usepackage{microtype}
+\setlength{\parskip}{3pt}
+
+\title{\textbf{Mathematical Formulation of Traffic-Aware MILP Task Reordering for Lifelong Multi-Agent Path Finding}}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+%-----------------------------------------------------------------------
+\section{Problem Definition}
+%-----------------------------------------------------------------------
+
+At each planning window in a lifelong Multi-Agent Path Finding (MAPF) system, robot $k$ is located at position $s$ (the origin/depot) and maintains an active bundle of $N$ pending shelf-picking tasks $\mathcal{G} = \{g_1, \ldots, g_N\}$. The robot must visit every task exactly once before replenishment. We seek the \textit{optimal visitation sequence} that maximizes lifelong task throughput.
+
+We formulate this task sequencing problem as an \textbf{open-loop Traveling Repairman Problem (TRP)} (also known as the Minimum Latency Problem) with time-dependent, traffic-calibrated edge traversal costs. The problem is solved to global optimality via Mixed-Integer Linear Programming (MILP) using Big-M arrival time propagation for simultaneous subtour elimination and latency computation.
+
+%-----------------------------------------------------------------------
+\section{Notation}
+%-----------------------------------------------------------------------
+
+\subsection*{Sets and Indices}
+\begin{tabularx}{\columnwidth}{lX}
+\toprule
+Symbol & Definition \\
+\midrule
+$\mathcal{V} = \{0,\ldots,N\}$ & Complete node set ($0$: current robot location; $1{\ldots}N$: assigned tasks) \\
+$\mathcal{E}$ & Directed edge set: $\{(i,j) \mid i,j \in \mathcal{V},\, i \neq j\}$ \\
+\bottomrule
+\end{tabularx}
+
+\subsection*{Parameters}
+\begin{tabularx}{\columnwidth}{lX}
+\toprule
+Symbol & Definition \\
+\midrule
+$c_{ij}$ & Calibrated travel cost (time) from node $i$ to $j$ \\
+$d(i,j)$ & Shortest obstacle-free grid distance from $i$ to $j$ \\
+$w(i,j,t)$ & Dynamic wait time along edge $(i,j)$ queried at departure time $t$ against all other agents' space-time reservations \\
+$\delta$ & Task dwell service delay (pickup / drop-off) \\
+$\hat{t}_i$ & Estimated departure time from node $i$ obtained via Nearest-Neighbor forward simulation \\
+$t_{\mathrm{cur}}$ & Current simulation clock timestep \\
+$M$ & Big-M scalar: $\sum_{i}\max_{j}\, c_{ij} + 1000$ \\
+\bottomrule
+\end{tabularx}
+
+\subsection*{Decision Variables}
+\begin{tabularx}{\columnwidth}{lX}
+\toprule
+Symbol & Definition \\
+\midrule
+$x_{ij} \in \{0,1\}$ & Binary routing decision; $x_{ij} = 1$ if the robot visits node $j$ directly after node $i$ \\
+$T_j \geq 0$ & Continuous variable representing the arrival timestamp at task $j \in \{1,\ldots,N\}$ \\
+\bottomrule
+\end{tabularx}
+
+%-----------------------------------------------------------------------
+\section{Traffic-Aware Cost Matrix}
+%-----------------------------------------------------------------------
+
+In multi-agent environments, routing costs depend heavily on space-time congestion. The cost $c_{ij}$ of traversing edge $(i, j)$ is computed in C++ prior to invoking the integer program:
+\begin{equation}
+  c_{ij} = d(i,j) + w(i,j,\hat{t}_i) + \delta
+  \label{eq:cost}
+\end{equation}
+where $w(i,j,\hat{t}_i)$ evaluates dynamic collision avoidance delays against the reservation tables of all other fleet agents.
+
+To supply the solver with realistic departure times without prior knowledge of the final optimal sequence, departure times $\hat{t}_i$ are pre-computed via a fast \textbf{Nearest-Neighbor (NN) forward trajectory simulation}:
+\begin{equation}
+  \hat{t}_0 = t_{\mathrm{cur}}, \quad
+  \hat{t}_{n+1} = \hat{t}_n + d(\pi_n, \pi_{n+1}) + w(\pi_n,\pi_{n+1},\hat{t}_n) + \delta
+  \label{eq:nn}
+\end{equation}
+where $\pi = (\pi_0, \pi_1, \ldots, \pi_N)$ denotes the Nearest-Neighbor visitation order. This calibration provides the MILP solver with accurate, time-dependent traffic awareness.
+
+%-----------------------------------------------------------------------
+\section{MILP Optimization Model}
+%-----------------------------------------------------------------------
+
+\subsection*{Canonical TRP Objective Function}
+Unlike classic Traveling Salesperson Problems (TSP) that minimize the completion time of the final task (makespan), lifelong warehousing requires completing each individual task as early as possible to accelerate inventory turnover and queue replenishment. We minimize the cumulative arrival latency:
+\begin{equation}
+  \min_{x, \, T} \; \sum_{j=1}^{N} T_j
+  \label{eq:obj}
+\end{equation}
+Notice that for any sequence of $N$ tasks, expanding the arrival times reveals an inherent sequential weighting:
+\begin{equation}
+  \sum_{j=1}^{N} T_j = \sum_{k=1}^{N} (N - k + 1) \cdot \text{cost}(\text{leg}_k)
+\end{equation}
+The earliest legs are naturally assigned the highest weights (e.g., $N, N-1, \ldots, 1$) without requiring artificial heuristic multipliers or tuning parameters.
+
+\subsection*{Constraints}
+
+\textbf{C1: Depot Departure} --- The robot must leave its current position exactly once:
+\begin{equation}
+  \sum_{j=1}^{N} x_{0j} = 1
+  \label{eq:c1}
+\end{equation}
+
+\textbf{C2: Task Entry} --- Each assigned task must be visited exactly once:
+\begin{equation}
+  \sum_{\substack{i \in \mathcal{V} \\ i \neq j}} x_{ij} = 1
+  \qquad \forall\, j \in \{1, \ldots, N\}
+  \label{eq:c2}
+\end{equation}
+
+\textbf{C3: Open-Loop Flow Conservation} --- Each task is departed at most once:
+\begin{equation}
+  \sum_{\substack{j \in \{1,\ldots,N\} \\ j \neq i}} x_{ij} \leq 1
+  \qquad \forall\, i \in \{1, \ldots, N\}
+  \label{eq:c3}
+\end{equation}
+
+\textbf{C4: Initial Arrival Propagation} --- Arrival at the first destination from depot:
+\begin{equation}
+  T_j \geq c_{0j} - M(1 - x_{0j})
+  \qquad \forall\, j \in \{1, \ldots, N\}
+  \label{eq:c4}
+\end{equation}
+
+\textbf{C5: Subtour Elimination \& Latency Propagation} --- Linearized arrival-time sequencing:
+\begin{equation}
+  T_j \geq T_i + c_{ij} - M(1 - x_{ij})
+  \quad \forall\, i, j \in \{1,\ldots,N\},\, i \neq j
+  \label{eq:c5}
+\end{equation}
+When $x_{ij} = 1$, constraint \eqref{eq:c5} enforces $T_j \geq T_i + c_{ij}$. When $x_{ij} = 0$, the constraint is relaxed by the Big-M scalar. This prevents any disconnected cycles (subtours) while simultaneously computing exact arrival times $T_j$.
+
+\textbf{C6: Active Goal Lock (Optional)} --- When dynamic replanning locks the in-progress destination:
+\begin{equation}
+  x_{01} = 1
+  \label{eq:c6}
+\end{equation}
+
+\textbf{C7: Variable Domains}:
+\begin{equation}
+  x_{ij} \in \{0,1\}, \quad 0 \leq T_j \leq M
+  \label{eq:c7}
+\end{equation}
+
+%-----------------------------------------------------------------------
+\section{Experimental Benchmark}
+%-----------------------------------------------------------------------
+
+We evaluated the proposed formulation in lifelong simulation against heuristic baselines on a 4-zone Kiva warehouse layout with 8 concurrent agents over 1,000 timesteps (task capacity $C=5$, planning window $w=20$):
+
+\begin{table}[h!]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Method} & \textbf{Tasks} & \textbf{T/step} & \textbf{Time (s)} & \textbf{Gain} \\
+\midrule
+\textbf{MILP (Pure TRP)} & \textbf{524} & \textbf{0.524} & 1119.0 & \textbf{+4.0\%} \\
+2-Opt (Local Search)     & 504          & 0.503          & 7.5    & Baseline \\
+\bottomrule
+\end{tabular}
+\caption{Benchmark results on 4-zone Kiva layout ($N=8$ agents, 1,000 timesteps).}
+\label{tab:results}
+\end{table}
+
+The pure canonical TRP formulation achieves the highest task throughput (524 completed tasks), outperforming the standard 2-Opt heuristic by +20 tasks while maintaining a clean, parameter-free mathematical formulation.
+
+\end{document}

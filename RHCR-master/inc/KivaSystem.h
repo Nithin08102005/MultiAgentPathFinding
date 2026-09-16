@@ -8,6 +8,7 @@
 #include <vector>
 #include <deque>
 #include <string>
+#include <random>
 
 class KivaSystem : public BasicSystem
 {
@@ -72,8 +73,13 @@ private:
     bool auto_refill           = true;
     bool avoid_dup_goals       = true;
     bool capacity_debug        = false;
-    int  reorder_mode          = 2; // 0: FIFO, 1: Naive Distance, 2: Fast 2-Opt ST-TSP
+    int  reorder_mode          = 2; // 0: FIFO, 1: Naive Distance 2-Opt, 2: Fast 2-Opt ST-TSP, 3: Exact MTZ-MILP
     bool lock_active_goal      = true; // If false, dynamically reorders all goals including Goal 1
+
+    mutable std::vector<std::mt19937> agent_rng;
+    std::vector<std::vector<int>> zone_endpoints;
+    int pick_endpoint_for_agent(int k) const;
+    int pick_random_unblocked_endpoint(int curr_loc, int requesting_agent);
 
     // helpers for capacity behavior
     int  cap_of(int k) const;
@@ -87,7 +93,7 @@ private:
     void reorder_bundle_by_dvs(int k, bool allow_full_reorder = true);
     bool dss_debug_print = true;  
 
-    int  generate_endpoint_for(int k, int avoid_v) const;
+    int  generate_endpoint_for(int k, int avoid_v = -1) const;
     void maybe_autorefill_rest(int k);
 
     std::unordered_set<int> collect_claimed_active_endpoints(int except_agent = -1) const;

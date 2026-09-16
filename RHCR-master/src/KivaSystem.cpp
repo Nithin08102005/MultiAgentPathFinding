@@ -20,6 +20,8 @@
 #include <sstream>
 #include <tuple>
 #include <climits>
+#include <cstdio>
+#include <cstdlib>
 
 using std::cout;
 using std::endl;
@@ -119,6 +121,30 @@ static inline int get_zone_for_location(const BasicGraph& G, int loc)
     if (r < mid_r && c >= mid_c) return 1; // Zone 1: Top-Right
     if (r >= mid_r && c < mid_c) return 2; // Zone 2: Bottom-Left
     return 3;                              // Zone 3: Bottom-Right
+}
+
+int KivaSystem::pick_endpoint_for_agent(int k) const
+{
+    int target_zone = (k >= 0) ? (k % 4) : 0;
+    if (target_zone >= 0 && target_zone < (int)zone_endpoints.size() && !zone_endpoints[target_zone].empty())
+    {
+        if (k >= 0 && k < (int)agent_rng.size())
+        {
+            std::uniform_int_distribution<int> dist(0, (int)zone_endpoints[target_zone].size() - 1);
+            return zone_endpoints[target_zone][dist(agent_rng[k])];
+        }
+        return zone_endpoints[target_zone][rand() % (int)zone_endpoints[target_zone].size()];
+    }
+    if (!G.endpoints.empty())
+    {
+        if (k >= 0 && k < (int)agent_rng.size())
+        {
+            std::uniform_int_distribution<int> dist(0, (int)G.endpoints.size() - 1);
+            return G.endpoints[dist(agent_rng[k])];
+        }
+        return G.endpoints[rand() % (int)G.endpoints.size()];
+    }
+    return 0;
 }
 
 static inline int pick_random_endpoint_in_zone(const KivaGrid& G, int agent_id, int avoid)
@@ -655,6 +681,18 @@ void KivaSystem::initialize()
     rest.assign(num_of_drives, {});
     bundle_dirty.assign(num_of_drives, true);
 
+    zone_endpoints.assign(4, {});
+    for (int ep : G.endpoints) {
+        int z = get_zone_for_location(G, ep);
+        if (z >= 0 && z < 4) {
+            zone_endpoints[z].push_back(ep);
+        }
+    }
+    agent_rng.resize(num_of_drives);
+    for (int k = 0; k < num_of_drives; ++k) {
+        agent_rng[k].seed(seed + k * 10007 + 1);
+    }
+
     bool succ = load_records();
     if (!succ)
     {
@@ -740,8 +778,7 @@ void KivaSystem::initialize_goal_locations()
 
     for (int k = 0; k < num_of_drives; k++)
     {
-        int curr = safe_path_at(paths, G, k, 0, consider_rotation).location;
-        int raw_g = pick_random_endpoint_in_zone(G, k, curr);
+        int raw_g = pick_endpoint_for_agent(k);
         int goal = find_exterior_travel_cell_for_endpoint(G, raw_g);
         goal_locations[k].emplace_back(goal, 0);
     }
@@ -752,7 +789,7 @@ void KivaSystem::ensure_goal_exists(int k, int curr)
 {
     if (k < 0 || k >= (int)goal_locations.size()) return;
     if (!goal_locations[k].empty()) return;
-    int raw_g = pick_random_endpoint_in_zone(G, k, curr);
+    int raw_g = pick_endpoint_for_agent(k);
     int g = find_exterior_travel_cell_for_endpoint(G, raw_g);
     goal_locations[k].emplace_back(g, 0);
 }
@@ -766,11 +803,18 @@ int KivaSystem::cap_of(int k) const
     return default_agent_capacity > 0 ? default_agent_capacity : 1;
 }
 
-void KivaSystem::bundle_configure(int, int capacity, bool randomize, unsigned seed)
+void KivaSystem::bundle_configure(int num_agents, int capacity, bool randomize, unsigned seed)
 {
     default_agent_capacity = (capacity > 0 ? capacity : 1);
     randomize_sequences = randomize;
     rng_seed            = seed;
+
+    if ((int)agent_rng.size() != num_agents) {
+        agent_rng.resize(num_agents);
+    }
+    for (int k = 0; k < num_agents; ++k) {
+        agent_rng[k].seed(rng_seed + k * 10007 + 1);
+    }
 }
 
 void KivaSystem::bundle_initialize_from_given(const std::vector<std::vector<int>>& gg)
@@ -860,26 +904,11 @@ bool KivaSystem::bundle_maybe_top_up(int k)
     if (k < 0 || k >= (int)bundle.size()) return false;
     bool changed = false;
 
-    std::unordered_set<int> claimed = avoid_dup_goals ? collect_claimed_active_endpoints(k)
-                                                      : std::unordered_set<int>{};
-
     const int cap = cap_of(k);
-    int curr = safe_path_at(paths, G, k, timestep, consider_rotation).location;
     while ((int)bundle[k].size() < cap && !rest[k].empty()) {
         auto g = rest[k].front(); rest[k].pop_front();
         g.first = clamp_vertex(G, g.first);
-
-        if (avoid_dup_goals && claimed.count(g.first)) {
-            int fresh_v = generate_endpoint_for(k, curr);
-            int tries = 50;
-            while (claimed.count(fresh_v) && tries-- > 0) {
-                fresh_v = generate_endpoint_for(k, curr);
-            }
-            g.first = clamp_vertex(G, fresh_v);
-        }
-
         bundle[k].push_back(g);
-        claimed.insert(g.first);
         changed = true;
     }
     if (changed) { bundle_dirty[k] = true; m_restitches_total++; }
@@ -1141,7 +1170,7 @@ static int evaluate_sequence_cost(const KivaGrid& G, std::vector<Path>& paths, i
         int driving_dist = get_dist_h(G, prev_v, goal_raw);
         int wait_time = 0;
 
-        if (reorder_mode == 2 && current_t > 0) {
+        if ((reorder_mode == 2 || reorder_mode == 3) && current_t > 0) {
             wait_time = get_projected_route_wait_time(G, paths, k, prev_v, prev_ori, goal_raw, projected_t, task_delay, consider_rotation);
         }
 
@@ -1170,8 +1199,105 @@ void KivaSystem::reorder_bundle_by_dvs(int k, bool allow_full_reorder)
     std::vector<int> best_perm(N);
     for (int i = 0; i < N; ++i) best_perm[i] = i;
 
-    if (N <= 3) {
-        // For small N (<= 3), exhaustive permutation (<= 6 permutations) is instant
+    if (reorder_mode == 3) {
+        // Mode 3: Real Mathematical MTZ-MILP Solver via COIN-OR CBC (solve_milp_cli.py)
+        int dim = N + 1;
+        std::vector<int> nodes(dim);
+        nodes[0] = start_v;
+        for (int i = 0; i < N; ++i) {
+            nodes[i + 1] = find_exterior_travel_cell_for_endpoint(G, items[i].first);
+        }
+
+        // Run Nearest-Neighbor sequentially to estimate real arrival time at each node.
+        // This gives MILP accurate traffic information for every edge (i->j),
+        // matching the same sequential time-awareness that 2-Opt has.
+        std::vector<int> node_arr_t(dim, timestep); // node_arr_t[i] = estimated departure time FROM nodes[i]
+        {
+            std::vector<bool> vis(N, false);
+            std::vector<int> nn_order;
+            if (!allow_full_reorder) { nn_order.push_back(0); vis[0] = true; }
+            int cur = start_v;
+            while ((int)nn_order.size() < N) {
+                int best_j = -1, best_d = INT_MAX;
+                for (int j = 0; j < N; ++j) {
+                    if (vis[j]) continue;
+                    int d = get_dist_h(G, cur, items[j].first);
+                    if (d < best_d) { best_d = d; best_j = j; }
+                }
+                if (best_j < 0) break;
+                nn_order.push_back(best_j);
+                vis[best_j] = true;
+                cur = find_exterior_travel_cell_for_endpoint(G, items[best_j].first);
+            }
+            int clock = timestep;
+            int prev_loc = start_v;
+            int prev_ori = start_ori;
+            for (int step = 0; step < (int)nn_order.size(); ++step) {
+                int goal_raw = items[nn_order[step]].first;
+                int dist = get_dist_h(G, prev_loc, goal_raw);
+                int wait = (clock > 0) ? get_projected_route_wait_time(G, paths, k, prev_loc, prev_ori, goal_raw, clock, task_delay, consider_rotation) : 0;
+                int leg = dist + wait + (task_delay > 0 ? task_delay : 7);
+                clock += leg;
+                // Record departure time FROM this node (= arrival time + dwell already included in leg)
+                node_arr_t[nn_order[step] + 1] = clock;
+                prev_loc = find_exterior_travel_cell_for_endpoint(G, goal_raw);
+            }
+        }
+
+        std::string cmd = "python solve_milp_cli.py " + std::to_string(dim) + " " + (allow_full_reorder ? "1" : "0");
+        for (int i = 0; i < dim; ++i) {
+            for (int j = 0; j < dim; ++j) {
+                int c = 0;
+                if (i != j) {
+                    int from_loc = nodes[i];
+                    int to_loc = (j == 0) ? start_v : items[j - 1].first;
+                    c = get_dist_h(G, from_loc, to_loc);
+                    if (timestep > 0) {
+                        // Use NN-calibrated departure time for this source node
+                        int dep_t = node_arr_t[i];
+                        c += get_projected_route_wait_time(G, paths, k, from_loc, start_ori, to_loc, dep_t, task_delay, consider_rotation);
+                    }
+                    c += (task_delay > 0 ? task_delay : 7);
+                }
+                cmd += " " + std::to_string(c);
+            }
+        }
+
+        bool milp_ok = false;
+        FILE* pipe = _popen(cmd.c_str(), "r");
+        if (pipe) {
+            std::vector<int> milp_seq;
+            int idx;
+            while (fscanf(pipe, "%d", &idx) == 1) {
+                if (idx >= 0 && idx < N) {
+                    milp_seq.push_back(idx);
+                }
+            }
+            _pclose(pipe);
+            if ((int)milp_seq.size() == N) {
+                if (allow_full_reorder || milp_seq[0] == 0) {
+                    best_perm = milp_seq;
+                }
+                milp_ok = true;
+            }
+        }
+
+        // Fallback to exact permutation if python bridge fails
+        if (!milp_ok) {
+            std::vector<int> perm = best_perm;
+            int best_cost = INT_MAX;
+            do {
+                if (!allow_full_reorder && perm[0] != 0) continue;
+                int cost = evaluate_sequence_cost(G, paths, k, items, perm, start_v, start_ori, timestep, task_delay, consider_rotation, reorder_mode);
+                if (cost < best_cost) {
+                    best_cost = cost;
+                    best_perm = perm;
+                }
+            } while (std::next_permutation(perm.begin(), perm.end()));
+        }
+    }
+    else if (N <= 3) {
+        // Modes 1 & 2 for small N (<= 3): fast exhaustive permutation is instantaneous
         std::vector<int> perm = best_perm;
         int best_cost = INT_MAX;
         do {
@@ -1184,7 +1310,7 @@ void KivaSystem::reorder_bundle_by_dvs(int k, bool allow_full_reorder)
         } while (std::next_permutation(perm.begin(), perm.end()));
     }
     else {
-        // For N > 3 (e.g. Capacity = 7): Fast Nearest-Neighbor + 2-Opt TSP Optimizer (< 1ms)
+        // Modes 1 & 2 for N > 3: Fast Nearest-Neighbor + 2-Opt TSP Optimizer (< 1ms)
         // 1. Initial Nearest-Neighbor Greedy Construction
         std::vector<int> perm;
         std::vector<bool> visited(N, false);
@@ -1250,7 +1376,7 @@ void KivaSystem::reorder_bundle_by_dvs(int k, bool allow_full_reorder)
 
 int KivaSystem::generate_endpoint_for(int k, int avoid_v) const
 {
-    return pick_random_endpoint_in_zone(G, k, avoid_v);
+    return pick_endpoint_for_agent(k);
 }
 
 void KivaSystem::maybe_autorefill_rest(int k)
@@ -1259,21 +1385,11 @@ void KivaSystem::maybe_autorefill_rest(int k)
     if (k < 0 || k >= (int)rest.size()) return;
 
     if (rest[k].empty()) {
-        int curr = safe_path_at(paths, G, k, timestep, consider_rotation).location;
-
-        std::unordered_set<int> claimed = collect_claimed_active_endpoints(k);
-        claimed.insert(clamp_vertex(G, curr));
-
         const int cap = cap_of(k);
         for (int i = 0; i < cap; ++i) {
-            int v = generate_endpoint_for(k, curr);
-            int tries = 16;
-            while (avoid_dup_goals && claimed.count(v) && tries-- > 0) {
-                v = generate_endpoint_for(k, curr);
-            }
+            int v = generate_endpoint_for(k);
             v = clamp_vertex(G, v);
             rest[k].push_back({v, 0});
-            claimed.insert(v);
         }
     }
 }
@@ -1829,12 +1945,9 @@ static bool is_goal_service_cell_conflicting(const KivaGrid& G, int target_cell,
     return false;
 }
 
-static int pick_random_unblocked_endpoint(const KivaGrid& G, int curr_loc, int requesting_agent, int num_of_drives,
-                                           std::vector<std::vector<State>>& paths,
-                                           std::vector<std::vector<std::pair<int, int>>>& goal_locations,
-                                           int timestep, bool consider_rotation)
+int KivaSystem::pick_random_unblocked_endpoint(int curr_loc, int requesting_agent)
 {
-    int raw_next = pick_random_endpoint_in_zone(G, requesting_agent, curr_loc);
+    int raw_next = pick_endpoint_for_agent(requesting_agent);
     int target_cell = find_exterior_travel_cell_for_endpoint(G, raw_next);
 
     int retry_count = 64;
@@ -1844,7 +1957,7 @@ static int pick_random_unblocked_endpoint(const KivaGrid& G, int curr_loc, int r
         {
             return target_cell;
         }
-        raw_next = pick_random_endpoint_in_zone(G, requesting_agent, raw_next);
+        raw_next = pick_endpoint_for_agent(requesting_agent);
         target_cell = find_exterior_travel_cell_for_endpoint(G, raw_next);
     }
     return target_cell;
@@ -1885,7 +1998,7 @@ void KivaSystem::update_goal_locations()
             if (is_goal_service_cell_conflicting(G, g.first, k, num_of_drives, paths, goal_locations, timestep, consider_rotation))
             {
                 gl_trace << "  [UGL] k=" << k << " pick_random_unblocked g.first=" << g.first << std::endl; gl_trace.flush();
-                g.first = pick_random_unblocked_endpoint(G, g.first, k, num_of_drives, paths, goal_locations, timestep, consider_rotation);
+                g.first = pick_random_unblocked_endpoint(g.first, k);
             }
         }
     }
@@ -1926,12 +2039,12 @@ void KivaSystem::update_goal_locations()
             int curr = safe_path_at(paths, G, k, timestep, consider_rotation).location;
             if (goal_locations[k].empty())
             {
-                int raw_next = pick_random_endpoint_except(G, curr);
+                int raw_next = pick_endpoint_for_agent(k);
                 int next = find_exterior_travel_cell_for_endpoint(G, raw_next);
                 int attempts = 0;
                 while ((raw_next == curr || held_endpoints.find(raw_next) != held_endpoints.end() || held_endpoints.find(next) != held_endpoints.end()) && attempts++ < 100)
                 {
-                    raw_next = pick_random_endpoint_except(G, curr);
+                    raw_next = pick_endpoint_for_agent(k);
                     next = find_exterior_travel_cell_for_endpoint(G, raw_next);
                 }
                 goal_locations[k].clear();
@@ -1944,12 +2057,12 @@ void KivaSystem::update_goal_locations()
             {
                 // Goal reached: generate a new goal for agent k
                 goal_locations[k].clear();
-                int raw_next = pick_random_endpoint_except(G, curr);
+                int raw_next = pick_endpoint_for_agent(k);
                 int next = find_exterior_travel_cell_for_endpoint(G, raw_next);
                 int attempts = 0;
                 while ((raw_next == curr || held_endpoints.find(raw_next) != held_endpoints.end() || held_endpoints.find(next) != held_endpoints.end()) && attempts++ < 100)
                 {
-                    raw_next = pick_random_endpoint_except(G, curr);
+                    raw_next = pick_endpoint_for_agent(k);
                     next = find_exterior_travel_cell_for_endpoint(G, raw_next);
                 }
                 goal_locations[k].emplace_back(next, 0);
@@ -2024,7 +2137,7 @@ void KivaSystem::update_goal_locations()
                 }
                 if (goal_locations[k].size() == 1)
                 {
-                    int raw_next = pick_random_endpoint_except(G, curr);
+                    int raw_next = pick_endpoint_for_agent(k);
                     int target_cell = find_exterior_travel_cell_for_endpoint(G, raw_next);
                     goal_locations[k].emplace(goal_locations[k].begin(), target_cell, 0);
                     new_agents.emplace_back(k);
@@ -2036,7 +2149,7 @@ void KivaSystem::update_goal_locations()
                 if (goal_locations[k].empty())
                 {
                     gl_trace << "  [UGL] else k=" << k << " calling pick_random_unblocked..." << std::endl; gl_trace.flush();
-                    int target_cell = pick_random_unblocked_endpoint(G, curr, k, num_of_drives, paths, goal_locations, timestep, consider_rotation);
+                    int target_cell = pick_random_unblocked_endpoint(curr, k);
                     gl_trace << "  [UGL] else k=" << k << " got target_cell=" << target_cell << std::endl; gl_trace.flush();
                     goal_locations[k].emplace_back(target_cell, 0);
                     new_agents.emplace_back(k);
