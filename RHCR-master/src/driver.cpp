@@ -140,6 +140,7 @@ int main(int argc, char** argv)
 		("safety_mode", po::value<bool>()->default_value(true), "enable safety reordering")
 		("reorder_mode", po::value<int>()->default_value(2), "goal reorder mode (0: FIFO, 1: Naive Distance, 2: Fast 2-Opt ST-TSP, 3: Exact MTZ-MILP)")
 		("lock_active_goal", po::value<bool>()->default_value(true), "lock active goal during transit")
+		("zone_flexibility", po::value<double>()->default_value(0.0), "probability of cross-zone task assignment (0.0=strict, 1.0=fully flexible)")
 		;
 	clock_t start_time = clock();
 	po::variables_map vm;
@@ -205,6 +206,8 @@ int main(int argc, char** argv)
 			system.setReorderMode(vm["reorder_mode"].as<int>());
 		if (vm.count("lock_active_goal"))
 			system.setLockActiveGoal(vm["lock_active_goal"].as<bool>());
+		if (vm.count("zone_flexibility"))
+			system.setZoneFlexibility(vm["zone_flexibility"].as<double>());
 		G.preprocessing(system.consider_rotation);
 		system.simulate(vm["simulation_time"].as<int>());
 		double total_wall_clock = (double)(clock() - start_time) / CLOCKS_PER_SEC;

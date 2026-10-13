@@ -4,6 +4,7 @@
 #include "LRAStar.h"
 #include "PBS.h"
 #include <iomanip>
+#include <chrono>
  
 #include "SIPP.h"
 #include "ReservationTable.h"
@@ -125,7 +126,20 @@ static inline int get_zone_for_location(const BasicGraph& G, int loc)
 
 int KivaSystem::pick_endpoint_for_agent(int k) const
 {
-    int target_zone = (k >= 0) ? (k % 4) : 0;
+    int base_zone = (k >= 0) ? (k % 4) : 0;
+    int target_zone = base_zone;
+
+    // Apply zone flexibility (alpha): with probability zone_flexibility, pick any of the 4 zones
+    if (zone_flexibility > 0.0 && k >= 0 && k < (int)agent_rng.size())
+    {
+        std::uniform_real_distribution<double> roll(0.0, 1.0);
+        if (roll(agent_rng[k]) < zone_flexibility)
+        {
+            std::uniform_int_distribution<int> dist_zone(0, 3);
+            target_zone = dist_zone(agent_rng[k]);
+        }
+    }
+
     if (target_zone >= 0 && target_zone < (int)zone_endpoints.size() && !zone_endpoints[target_zone].empty())
     {
         if (k >= 0 && k < (int)agent_rng.size())
@@ -709,6 +723,9 @@ void KivaSystem::initialize()
     build_chokepoints_once(G);
 
     bundle_configure(num_of_drives, default_agent_capacity, randomize_sequences, rng_seed);
+    std::cout << "[System] Zone flexibility (alpha): " << zone_flexibility << " (" 
+              << (zone_flexibility == 0.0 ? "Strict Zoning" : (zone_flexibility == 1.0 ? "Fully Flexible" : "Hybrid Cross-Zone")) 
+              << ")" << std::endl;
     if (!given_goals.empty())
         bundle_initialize_from_given(given_goals);
     else if (capacity_mode && succ) {
@@ -731,10 +748,54 @@ void KivaSystem::initialize()
 
 void KivaSystem::initialize_start_locations()
 {
+    // Group available home stations by zone (Zone 0: TL, 1: TR, 2: BL, 3: BR)
+    std::vector<std::vector<int>> zone_homes(4);
+    for (int h : G.agent_home_locations) {
+        int z = get_zone_for_location(G, h);
+        if (z >= 0 && z < 4) {
+            zone_homes[z].push_back(clamp_vertex(G, h));
+        }
+    }
+
+    std::vector<size_t> zone_home_idx(4, 0);
+    std::unordered_set<int> used_locations;
+
     for (int k = 0; k < num_of_drives; k++)
     {
-        int home = (!G.agent_home_locations.empty() && k < (int)G.agent_home_locations.size())
-                 ? clamp_vertex(G, G.agent_home_locations[k]) : 0;
+        int target_zone = (k >= 0) ? (k % 4) : 0;
+        int home = -1;
+
+        // 1. Try to assign dedicated home station in robot's target zone
+        if (zone_home_idx[target_zone] < zone_homes[target_zone].size()) {
+            home = zone_homes[target_zone][zone_home_idx[target_zone]++];
+        } 
+        // 2. If zone homes exhausted, try any other unused home station
+        else {
+            for (int z = 0; z < 4; z++) {
+                if (zone_home_idx[z] < zone_homes[z].size()) {
+                    home = zone_homes[z][zone_home_idx[z]++];
+                    break;
+                }
+            }
+        }
+
+        // 3. Fallback for large stress-tests (N > total home stations):
+        // Pick an unused valid endpoint in target_zone!
+        if (home < 0 || used_locations.count(home)) {
+            for (int ep : zone_endpoints[target_zone]) {
+                if (!used_locations.count(ep)) {
+                    home = ep;
+                    break;
+                }
+            }
+        }
+        if (home < 0) {
+            home = (!G.agent_home_locations.empty()) 
+                 ? clamp_vertex(G, G.agent_home_locations[k % (int)G.agent_home_locations.size()]) : 0;
+        }
+
+        used_locations.insert(home);
+
         int orientation = consider_rotation ? 0 : -1;
         if (consider_rotation)
         {
@@ -750,6 +811,7 @@ void KivaSystem::initialize_start_locations()
             {
                 for (int loc = 0; loc < G.size(); loc++)
                 {
+                    if (used_locations.count(loc)) continue;
                     for (int ori = 0; ori < 4; ori++)
                     {
                         if (G.valid_3cell_state(loc, ori))
@@ -1193,6 +1255,8 @@ void KivaSystem::reorder_bundle_by_dvs(int k, bool allow_full_reorder)
     const int start_v = curr_st.location;
     const int start_ori = curr_st.orientation;
 
+    auto t_reorder_start = std::chrono::high_resolution_clock::now();
+
     std::vector<std::pair<int,int>> items(bundle[k].begin(), bundle[k].end());
     const int N = (int)items.size();
 
@@ -1272,6 +1336,11 @@ void KivaSystem::reorder_bundle_by_dvs(int k, bool allow_full_reorder)
                 if (idx >= 0 && idx < N) {
                     milp_seq.push_back(idx);
                 }
+            }
+            char time_tag[32];
+            double pure_cbc_ms = 0.0;
+            if (fscanf(pipe, "%31s %lf", time_tag, &pure_cbc_ms) == 2) {
+                total_pure_milp_solver_time_sec += (pure_cbc_ms / 1000.0);
             }
             _pclose(pipe);
             if ((int)milp_seq.size() == N) {
@@ -1372,6 +1441,11 @@ void KivaSystem::reorder_bundle_by_dvs(int k, bool allow_full_reorder)
     bundle[k] = std::move(reordered);
     bundle_dirty[k] = true;
     m_restitches_total++;
+
+    auto t_reorder_end = std::chrono::high_resolution_clock::now();
+    double dur_sec = std::chrono::duration<double>(t_reorder_end - t_reorder_start).count();
+    total_reorder_pure_time_sec += dur_sec;
+    total_reorder_calls++;
 }
 
 int KivaSystem::generate_endpoint_for(int k, int avoid_v) const
@@ -2253,6 +2327,38 @@ void KivaSystem::simulate(int simulation_time)
           << (double)num_of_tasks / (double)(timestep + 1)
           << " tasks per timestep" << std::endl;
 
+    std::cout << "\n=======================================================" << std::endl;
+    std::cout << " HIGH-LEVEL TASK REORDERING METRICS (PURE REORDER ONLY):" << std::endl;
+    std::cout << " Reorder Solver Mode:       " << (reorder_mode == 0 ? "FIFO (None)" :
+                                                 (reorder_mode == 1 ? "Naive Distance 2-Opt" :
+                                                 (reorder_mode == 2 ? "Space-Time 2-Opt" : "Exact MTZ-MILP"))) << std::endl;
+    std::cout << " Total Reorder Invocations: " << total_reorder_calls << std::endl;
+    std::cout << " Total Pure Reorder Time:   " << std::fixed << std::setprecision(4) 
+              << total_reorder_pure_time_sec << " s (" << total_reorder_pure_time_sec * 1000.0 << " ms)" << std::endl;
+    if (total_reorder_calls > 0) {
+        std::cout << " Avg Pure Reorder / Call:   " << std::fixed << std::setprecision(4)
+                  << (total_reorder_pure_time_sec / total_reorder_calls) * 1000.0 << " ms ("
+                  << (total_reorder_pure_time_sec / total_reorder_calls) * 1000000.0 << " us)" << std::endl;
+    }
+    if (reorder_mode == 3 && total_reorder_calls > 0) {
+        std::cout << " Total Pure CBC Math Time:  " << total_pure_milp_solver_time_sec << " s (" << total_pure_milp_solver_time_sec * 1000.0 << " ms)" << std::endl;
+        std::cout << " Avg Pure CBC Math / Call:  " << (total_pure_milp_solver_time_sec / total_reorder_calls) * 1000.0 << " ms" << std::endl;
+    }
+    std::cout << "=======================================================\n" << std::endl;
+
+    std::ofstream r_out(outfile + "/reorder_metrics.txt");
+    if (r_out.is_open()) {
+        r_out << "reorder_mode," << reorder_mode << "\n";
+        r_out << "total_reorder_calls," << total_reorder_calls << "\n";
+        r_out << "total_reorder_pure_time_sec," << total_reorder_pure_time_sec << "\n";
+        r_out << "avg_reorder_time_ms," << (total_reorder_calls > 0 ? (total_reorder_pure_time_sec / total_reorder_calls) * 1000.0 : 0.0) << "\n";
+        r_out << "avg_reorder_time_us," << (total_reorder_calls > 0 ? (total_reorder_pure_time_sec / total_reorder_calls) * 1000000.0 : 0.0) << "\n";
+        if (reorder_mode == 3) {
+            r_out << "total_pure_cbc_math_sec," << total_pure_milp_solver_time_sec << "\n";
+            r_out << "avg_pure_cbc_math_ms," << (total_reorder_calls > 0 ? (total_pure_milp_solver_time_sec / total_reorder_calls) * 1000.0 : 0.0) << "\n";
+        }
+        r_out.close();
+    }
 
     save_results();
 }

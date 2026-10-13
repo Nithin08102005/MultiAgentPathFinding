@@ -31,6 +31,7 @@ public:
     void setAutoRefill(bool on)                   { auto_refill = on; }
     void setAvoidDuplicateGoals(bool on)          { avoid_dup_goals = on; }
     void setCapacityDebug(bool on)                { capacity_debug = on; }
+    void setZoneFlexibility(double flex)          { zone_flexibility = flex; }
 
     // ====== Stitching controls ======
     void setStitchMode(bool on)                   { stitch_mode = on; }
@@ -75,6 +76,7 @@ private:
     bool capacity_debug        = false;
     int  reorder_mode          = 2; // 0: FIFO, 1: Naive Distance 2-Opt, 2: Fast 2-Opt ST-TSP, 3: Exact MTZ-MILP
     bool lock_active_goal      = true; // If false, dynamically reorders all goals including Goal 1
+    double zone_flexibility    = 0.0;  // Probability of cross-zone task assignment (0.0=strict, 1.0=fully flexible)
 
     mutable std::vector<std::mt19937> agent_rng;
     std::vector<std::vector<int>> zone_endpoints;
@@ -91,6 +93,9 @@ private:
     void bundle_assert_capacity_ok(int k);
 
     void reorder_bundle_by_dvs(int k, bool allow_full_reorder = true);
+    double total_reorder_pure_time_sec = 0.0;
+    long long total_reorder_calls = 0;
+    double total_pure_milp_solver_time_sec = 0.0;
     bool dss_debug_print = true;  
 
     int  generate_endpoint_for(int k, int avoid_v = -1) const;
