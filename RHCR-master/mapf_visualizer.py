@@ -75,25 +75,25 @@ class GeneralizedKivaVisualizer:
             self.show_robot_ids = True
             self.grid_detail = "high"
             
-        elif self.num_agents <= 30:
+        elif self.num_agents <= 64:
             self.viz_mode = "MEDIUM"
-            self.robot_size = 0.3
-            self.font_size = 8
+            self.robot_size = 0.28
+            self.font_size = 7
             self.trail_length = 8
             self.trail_alpha = 0.5
             self.show_individual_status = True
             self.show_robot_ids = True
             self.grid_detail = "medium"
             
-        elif self.num_agents <= 100:
+        elif self.num_agents <= 128:
             self.viz_mode = "COMPACT"
-            self.robot_size = 0.25
+            self.robot_size = 0.22
             self.font_size = 6
             self.trail_length = 5
             self.trail_alpha = 0.4
             self.show_individual_status = False
             self.show_robot_ids = True
-            self.grid_detail = "low"
+            self.grid_detail = "medium"
             
         elif self.num_agents <= 500:
             self.viz_mode = "DENSE"
@@ -143,7 +143,7 @@ class GeneralizedKivaVisualizer:
                 start_idx = i * per_map
                 end_idx = min((i + 1) * per_map, self.num_agents)
                 if start_idx < self.num_agents:
-                    cmap = plt.cm.get_cmap(cmap_name)
+                    cmap = plt.get_cmap(cmap_name)
                     colors.extend([cmap(j / per_map) for j in range(end_idx - start_idx)])
             
             self.colors = np.array(colors[:self.num_agents])
@@ -355,23 +355,13 @@ class GeneralizedKivaVisualizer:
                         rect = Rectangle((x-0.5, y-0.5), 1, 1, facecolor='orange', alpha=0.7)
                         self.ax_main.add_patch(rect)
                 elif cell == 'r':
-                    rect = Rectangle((x-0.5, y-0.5), 1, 1, facecolor='lightblue', alpha=0.5)
+                    rect = Rectangle((x-0.5, y-0.5), 1, 1, facecolor='#00b0ff', edgecolor='#80d8ff', alpha=0.4, zorder=2)
                     self.ax_main.add_patch(rect)
+                    self.ax_main.text(x, y, 'R', ha='center', va='center', fontweight='bold', fontsize=5.0, color='#ffffff', zorder=10)
 
     def render_basic_warehouse(self):
-        """Basic warehouse for 30-100 robots"""
-        # Batch render for performance
-        shelf_coords = np.where(self.map_data == '@')
-        endpoint_coords = np.where(self.map_data == 'e')
-        robot_coords = np.where(self.map_data == 'r')
-        
-        for y, x in zip(shelf_coords[0], shelf_coords[1]):
-            rect = Rectangle((x-0.5, y-0.5), 1, 1, facecolor='brown', alpha=0.6)
-            self.ax_main.add_patch(rect)
-            
-        for y, x in zip(endpoint_coords[0], endpoint_coords[1]):
-            rect = Rectangle((x-0.5, y-0.5), 1, 1, facecolor='orange', alpha=0.5)
-            self.ax_main.add_patch(rect)
+        """Basic warehouse for large robot counts with full symbols and endpoint IDs"""
+        self.render_medium_warehouse()
 
     def render_minimal_warehouse(self):
         """Minimal warehouse for 100-500 robots"""
@@ -877,10 +867,38 @@ def main():
     
     if len(sys.argv) > 1:
         arg = sys.argv[1]
-        if os.path.isdir(_resolve_data_path(arg)):
-            paths_file = os.path.join(arg, 'paths.txt')
+        resolved_arg = _resolve_data_path(arg)
+        if os.path.isdir(resolved_arg):
+            paths_file = os.path.join(resolved_arg, 'paths.txt')
+            config_file = os.path.join(resolved_arg, 'config.txt')
+            if os.path.exists(config_file):
+                try:
+                    with open(config_file, 'r') as cf:
+                        for cline in cf:
+                            if cline.startswith('map:'):
+                                mname = cline.split(':', 1)[1].strip()
+                                if not mname.endswith('.map'):
+                                    mname += '.map'
+                                map_file = mname
+                                break
+                except Exception:
+                    pass
         else:
             paths_file = arg
+            parent_dir = os.path.dirname(paths_file)
+            config_file = os.path.join(parent_dir, 'config.txt')
+            if os.path.exists(config_file):
+                try:
+                    with open(config_file, 'r') as cf:
+                        for cline in cf:
+                            if cline.startswith('map:'):
+                                mname = cline.split(':', 1)[1].strip()
+                                if not mname.endswith('.map'):
+                                    mname += '.map'
+                                map_file = mname
+                                break
+                except Exception:
+                    pass
     if len(sys.argv) > 2:
         map_file = sys.argv[2]
         

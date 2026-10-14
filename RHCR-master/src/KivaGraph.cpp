@@ -164,10 +164,6 @@ bool KivaGrid::load_unweighted_map(std::string fname)
 			{
 				types[id] = "Home";
 				weights[id][4] = 1;
-				if (j == 2 || j == 54)
-				{
-					agent_home_locations.push_back(id);
-				}
 			}
 			else
 			{
@@ -176,6 +172,56 @@ bool KivaGrid::load_unweighted_map(std::string fname)
 			}
 		}
 	}
+
+	// Automatically detect robot home bay centers (3-cell rigid bays) for any map layout
+	std::vector<bool> in_bay(rows * cols, false);
+
+	// 1. Detect horizontal 3-cell bays: 'r r r'
+	for (int i = 0; i < rows; i++)
+	{
+		for (int j = 1; j < cols - 1; j++)
+		{
+			int left = i * cols + (j - 1);
+			int center = i * cols + j;
+			int right = i * cols + (j + 1);
+			if (types[left] == "Home" && types[center] == "Home" && types[right] == "Home" &&
+			    !in_bay[left] && !in_bay[center] && !in_bay[right])
+			{
+				agent_home_locations.push_back(center);
+				in_bay[left] = in_bay[center] = in_bay[right] = true;
+			}
+		}
+	}
+
+	// 2. Detect vertical 3-cell bays: 'r' above, 'r' center, 'r' below
+	for (int j = 0; j < cols; j++)
+	{
+		for (int i = 1; i < rows - 1; i++)
+		{
+			int top = (i - 1) * cols + j;
+			int center = i * cols + j;
+			int bottom = (i + 1) * cols + j;
+			if (types[top] == "Home" && types[center] == "Home" && types[bottom] == "Home" &&
+			    !in_bay[top] && !in_bay[center] && !in_bay[bottom])
+			{
+				agent_home_locations.push_back(center);
+				in_bay[top] = in_bay[center] = in_bay[bottom] = true;
+			}
+		}
+	}
+
+	// 3. Fallback for standard 1-cell MAPF benchmark maps (where each 'r' is a 1-cell station):
+	if (agent_home_locations.empty())
+	{
+		for (int id = 0; id < rows * cols; id++)
+		{
+			if (types[id] == "Home")
+			{
+				agent_home_locations.push_back(id);
+			}
+		}
+	}
+
 	shuffle(agent_home_locations.begin(), agent_home_locations.end(), std::default_random_engine());
 	for (int i = 0; i < cols * rows; i++)
 	{

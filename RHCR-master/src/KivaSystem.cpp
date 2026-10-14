@@ -47,7 +47,14 @@ static std::vector<int> g_replan_cooldown;
 
  
 
- 
+struct NullStream {
+    template<typename T>
+    NullStream& operator<<(const T&) { return *this; }
+    typedef std::ostream& (*ManipFn)(std::ostream&);
+    NullStream& operator<<(ManipFn) { return *this; }
+    void flush() {}
+};
+
 static inline int effective_planning_window(int base_window, int agents)
 {
     if (agents >= 256) return std::max(10, base_window * 2 / 3);
@@ -2043,8 +2050,8 @@ void KivaSystem::update_goal_locations()
     if (!LRA_called)
         new_agents.clear();
 
-    // Open a SEPARATE trace file for UGL (avoid double-handle on crash_trace.txt)
-    std::ofstream gl_trace(outfile + "/ugl_trace.txt", std::ios::app);
+    // Fast mode: disable trace file logging for performance and zero disk bloat
+    NullStream gl_trace;
     gl_trace << "  [UGL] enter t=" << timestep << std::endl; gl_trace.flush();
 
     // Sanitize initial start orientations and goal locations for 3-cell footprint
@@ -2241,12 +2248,10 @@ void KivaSystem::simulate(int simulation_time)
     this->simulation_time = simulation_time;
     initialize();
 
-    std::ofstream crash_log(outfile + "/crash_trace.txt", std::ios::out);
-    crash_log << "=== CRASH TRACE START ===" << std::endl;
-    crash_log.flush();
-    // Make crash_log accessible to solve() via a global pointer
+    // Fast mode: disable trace file logging for performance and zero disk bloat
+    NullStream crash_log;
     extern std::ofstream* g_crash_log;
-    g_crash_log = &crash_log;
+    g_crash_log = nullptr;
 
     for (; timestep < simulation_time; timestep += simulation_window)
     {
