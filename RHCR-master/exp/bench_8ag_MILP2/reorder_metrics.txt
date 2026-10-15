@@ -1,0 +1,7 @@
+reorder_mode,3
+total_reorder_calls,1600
+total_reorder_pure_time_sec,1841.53
+avg_reorder_time_ms,1150.96
+avg_reorder_time_us,1.15096e+06
+total_pure_cbc_math_sec,1464.08
+avg_pure_cbc_math_ms,915.049

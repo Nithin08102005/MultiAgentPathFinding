@@ -45,6 +45,7 @@ class GeneralizedKivaVisualizer:
             'shelves': np.sum(self.map_data == '@'),
             'endpoints': np.sum(self.map_data == 'e'),
             'robot_zones': np.sum(self.map_data == 'r'),
+            'workstations': np.sum(self.map_data == 'w'),
             'free_space': np.sum(self.map_data == '.')
         }
         
@@ -190,6 +191,39 @@ class GeneralizedKivaVisualizer:
                         sloc = sy * self.grid_width + ex
                         if sloc not in self.service_to_endpoint:
                             self.service_to_endpoint[sloc] = info
+        
+        # Setup workstation registry and adjacent service cells
+        self.workstation_info_by_loc = {}
+        for y in range(self.grid_height):
+            for x in range(self.grid_width):
+                if self.map_data[y, x] == 'w':
+                    loc = y * self.grid_width + x
+                    if x < mid_x:
+                        zid = 0 if y < mid_y else 2
+                    else:
+                        zid = 1 if y < mid_y else 3
+                    info = {
+                        'zone': zid,
+                        'x': x,
+                        'y': y,
+                        'loc': loc,
+                        'label': f"STATION-Z{zid}",
+                        'is_station': True
+                    }
+                    self.workstation_info_by_loc[loc] = info
+                    for dy in [-1, 1]:
+                        sy = y + dy
+                        if 0 <= sy < self.grid_height:
+                            sloc = sy * self.grid_width + x
+                            if sloc not in self.workstation_info_by_loc:
+                                self.workstation_info_by_loc[sloc] = {
+                                    'zone': zid,
+                                    'x': x,
+                                    'y': sy,
+                                    'loc': sloc,
+                                    'label': f"STATION-Z{zid}",
+                                    'is_station': True
+                                }
 
     def get_current_target_info(self, agent_id, t):
         """Get the current target endpoint info (Zone and local ID) for an agent at time t"""
@@ -200,22 +234,26 @@ class GeneralizedKivaVisualizer:
         # Find the active task where finish_time > t
         for loc, finish_time in self.tasks[agent_id][1:]:
             if finish_time > t or finish_time < 0:
-                if loc in self.endpoint_info_by_loc:
+                if loc in self.workstation_info_by_loc:
+                    return self.workstation_info_by_loc[loc]
+                elif loc in self.endpoint_info_by_loc:
                     return self.endpoint_info_by_loc[loc]
                 elif loc in self.service_to_endpoint:
                     return self.service_to_endpoint[loc]
                 else:
                     tx, ty = self.location_to_xy(loc)
-                    return {'label': f"({tx},{ty})", 'x': tx, 'y': ty, 'zone': agent_id % 4, 'id': 0}
+                    return {'label': f"({tx},{ty})", 'x': tx, 'y': ty, 'zone': agent_id % 4, 'id': 0, 'is_station': False}
         
         # If all tasks are completed, show the last target
         last_loc = self.tasks[agent_id][-1][0]
-        if last_loc in self.endpoint_info_by_loc:
+        if last_loc in self.workstation_info_by_loc:
+            return self.workstation_info_by_loc[last_loc]
+        elif last_loc in self.endpoint_info_by_loc:
             return self.endpoint_info_by_loc[last_loc]
         elif last_loc in self.service_to_endpoint:
             return self.service_to_endpoint[last_loc]
         tx, ty = self.location_to_xy(last_loc)
-        return {'label': f"({tx},{ty})", 'x': tx, 'y': ty, 'zone': agent_id % 4, 'id': 0}
+        return {'label': f"({tx},{ty})", 'x': tx, 'y': ty, 'zone': agent_id % 4, 'id': 0, 'is_station': False}
 
     def setup_adaptive_layout(self):
         """Setup figure layout based on visualization mode with Dark Theme"""
@@ -292,6 +330,62 @@ class GeneralizedKivaVisualizer:
             for y in range(0, self.grid_height, spacing):
                 self.ax_main.axhline(y - 0.5, color='lightgray', linewidth=0.2, alpha=0.5)
 
+    def find_workstation_spans(self):
+        """Find all contiguous horizontal spans of 'w' cells and their agent docking locations"""
+        spans = []
+        for y in range(self.grid_height):
+            x = 0
+            while x < self.grid_width:
+                if self.map_data[y, x] == 'w':
+                    start_x = x
+                    while x + 1 < self.grid_width and self.map_data[y, x + 1] == 'w':
+                        x += 1
+                    end_x = x
+                    mid_x = (start_x + end_x) // 2
+                    dock_y = y + 1 if y < self.grid_height / 2 else y - 1
+                    spans.append({
+                        'y': y,
+                        'start_x': start_x,
+                        'end_x': end_x,
+                        'mid_x': mid_x,
+                        'dock_y': dock_y,
+                        'width': end_x - start_x + 1
+                    })
+                x += 1
+        return spans
+
+    def render_workstations_and_docks(self, font_size=5.5):
+        """Render workstations in nice blue with a single 'W' in the center and placeholder lining in front for the agent"""
+        spans = self.find_workstation_spans()
+        for span in spans:
+            y = span['y']
+            start_x = span['start_x']
+            end_x = span['end_x']
+            mid_x = span['mid_x']
+            dock_y = span['dock_y']
+            width = span['width']
+            
+            # 1. Render contiguous workstation block in nice blue
+            rect = Rectangle((start_x - 0.5, y - 0.5), width, 1,
+                             facecolor='#0d47a1', edgecolor='#00b0ff', alpha=0.92, linewidth=1.5, zorder=3)
+            self.ax_main.add_patch(rect)
+            
+            # Sub-cell internal divider lines for crisp modular look
+            for cx in range(start_x + 1, end_x + 1):
+                self.ax_main.plot([cx - 0.5, cx - 0.5], [y - 0.5, y + 0.5],
+                                  color='#0091ea', linewidth=0.8, alpha=0.6, zorder=4)
+                
+            # 2. Only ONE 'W' in the middle of the workstation
+            self.ax_main.text(mid_x, y, 'W', ha='center', va='center',
+                              fontweight='bold', fontsize=font_size, color='#ffffff', zorder=10)
+            
+            # 3. Placeholder lining in front of it for the agent (docking bay)
+            if 0 <= dock_y < self.grid_height:
+                dock_rect = Rectangle((start_x - 0.5, dock_y - 0.5), width, 1,
+                                      facecolor='#00b0ff', alpha=0.10,
+                                      edgecolor='#00e5ff', linestyle='--', linewidth=1.5, zorder=2)
+                self.ax_main.add_patch(dock_rect)
+
     def render_detailed_warehouse(self):
         """Full warehouse detail with Zone-coded endpoint IDs (Dark Theme)"""
         zone_colors = {
@@ -325,6 +419,9 @@ class GeneralizedKivaVisualizer:
                     rect = Rectangle((x-0.5, y-0.5), 1, 1, facecolor='#00b0ff', edgecolor='#80d8ff', alpha=0.4, zorder=2)
                     self.ax_main.add_patch(rect)
                     self.ax_main.text(x, y, 'R', ha='center', va='center', fontweight='bold', fontsize=6, color='#ffffff', zorder=10)
+        
+        # Render blue workstations with central 'W' and agent placeholder lining
+        self.render_workstations_and_docks(font_size=6.0)
 
     def render_medium_warehouse(self):
         """Simplified warehouse with Zone-coded endpoint IDs for 10-30 robots"""
@@ -358,6 +455,9 @@ class GeneralizedKivaVisualizer:
                     rect = Rectangle((x-0.5, y-0.5), 1, 1, facecolor='#00b0ff', edgecolor='#80d8ff', alpha=0.4, zorder=2)
                     self.ax_main.add_patch(rect)
                     self.ax_main.text(x, y, 'R', ha='center', va='center', fontweight='bold', fontsize=5.0, color='#ffffff', zorder=10)
+        
+        # Render blue workstations with central 'W' and agent placeholder lining
+        self.render_workstations_and_docks(font_size=5.5)
 
     def render_basic_warehouse(self):
         """Basic warehouse for large robot counts with full symbols and endpoint IDs"""
@@ -373,6 +473,10 @@ class GeneralizedKivaVisualizer:
         endpoint_coords = np.where(self.map_data == 'e')
         if len(endpoint_coords[0]) > 0:
             self.ax_main.scatter(endpoint_coords[1], endpoint_coords[0], c='orange', s=4, alpha=0.5, marker='s')
+        
+        ws_coords = np.where(self.map_data == 'w')
+        if len(ws_coords[0]) > 0:
+            self.ax_main.scatter(ws_coords[1], ws_coords[0], c='#00b0ff', s=6, alpha=0.9, marker='s')
 
     def render_background_only(self):
         """Background color coding for 500+ robots"""
@@ -382,10 +486,12 @@ class GeneralizedKivaVisualizer:
         shelf_mask = self.map_data == '@'
         endpoint_mask = self.map_data == 'e'
         robot_mask = self.map_data == 'r'
+        ws_mask = self.map_data == 'w'
         
         background[shelf_mask] = [0.6, 0.4, 0.2]  # Brown
         background[endpoint_mask] = [1.0, 0.6, 0.0]  # Orange
         background[robot_mask] = [0.7, 0.8, 1.0]  # Light blue
+        background[ws_mask] = [0.05, 0.35, 0.75]  # Nice blue
         
         self.ax_main.imshow(background, extent=[-0.5, self.grid_width-0.5, self.grid_height-0.5, -0.5], alpha=0.5)
 
@@ -407,6 +513,7 @@ class GeneralizedKivaVisualizer:
         robot_status = []
         active_count = 0
         picking_count = 0
+        delivering_count = 0
         completed_count = 0
         
         t_int = int(timestep)
@@ -469,8 +576,10 @@ class GeneralizedKivaVisualizer:
                 zone_id = agent_id % 4
                 completed_tasks = self.get_completed_tasks_count(agent_id, timestep)
                 
-                # Detect picking/dwelling (at target endpoint or adjacent service cell)
-                is_picking = (cell_type == 'e') or (target_info and target_info['x'] == cell_x and abs(target_info['y'] - cell_y) <= 1 and (orient_curr == 0 or orient_curr == 2))
+                # Detect delivering / picking / dwelling
+                is_station = target_info.get('is_station', False) if target_info else False
+                is_delivering = is_station and (cell_x == target_info['x'] and cell_y == target_info['y'])
+                is_picking = (cell_type == 'e') or (target_info and not is_station and target_info['x'] == cell_x and abs(target_info['y'] - cell_y) <= 1 and (orient_curr == 0 or orient_curr == 2))
 
                 # Robot ID centered inside robot body, target badge floating offset above robot
                 if self.show_robot_ids and self.font_size > 0:
@@ -481,7 +590,10 @@ class GeneralizedKivaVisualizer:
                     
                     # 2. Dynamic Target & Task floating tag offset above robot
                     tag_y = y - 0.85
-                    if is_picking:
+                    if is_delivering:
+                        tag_label = f"R{agent_id} [DROPOFF BINS]"
+                        badge_edge = "#00e5ff"
+                    elif is_picking:
                         tag_label = f"R{agent_id} [PICK {target_label}]"
                         badge_edge = "#ffd600"
                     else:
@@ -505,7 +617,13 @@ class GeneralizedKivaVisualizer:
                         line, = self.ax_main.plot(trail_x, trail_y, color=color, alpha=self.trail_alpha, linewidth=1)
                         self.trail_artists.append(line)
                 
-                if is_picking:
+                if is_delivering:
+                    delivering_count += 1
+                    if self.show_individual_status:
+                        robot_status.append(f"R{agent_id} (Z{zone_id}): -> {target_label} [DELIVERING] ({completed_tasks} done)")
+                    marker = self.ax_main.plot(cell_x, cell_y, 'D', color='#00e5ff', markersize=max(6, 12-self.num_agents//10), markeredgecolor='white')[0]
+                    self.agent_artists.append(marker)
+                elif is_picking:
                     picking_count += 1
                     if self.show_individual_status:
                         robot_status.append(f"R{agent_id} (Z{zone_id}): -> {target_label} [PICKING] ({completed_tasks} done)")
@@ -523,11 +641,11 @@ class GeneralizedKivaVisualizer:
         
         # Update title
         total_tasks_completed = sum(self.get_completed_tasks_count(agent_id, timestep) for agent_id in self.solution['agents'].keys())
-        summary = f"Active: {active_count} | Picking: {picking_count} | Tasks: {total_tasks_completed} | "
+        summary = f"Active: {active_count} | Picking: {picking_count} | Delivering: {delivering_count} | Tasks: {total_tasks_completed} | "
         self.ax_main.set_title(f'Kiva Warehouse ({self.num_agents} robots) - {summary} - Step: {timestep:.1f}', 
                               fontsize=12, fontweight='bold')
         
-        return robot_status, {'active': active_count, 'picking': picking_count, 'completed': completed_count}
+        return robot_status, {'active': active_count, 'picking': picking_count, 'delivering': delivering_count, 'completed': completed_count}
 
     def render_heatmap_mode(self, timestep):
         """Heatmap visualization for 500+ robots"""
@@ -578,10 +696,12 @@ Warehouse:
 • Shelves: {self.warehouse_stats['shelves']}
 • Endpoints: {self.warehouse_stats['endpoints']}
 • Robot Zones: {self.warehouse_stats['robot_zones']}
+• Stations: {self.warehouse_stats.get('workstations', 0)}
 
 Status Summary:
 • Active: {summary_stats['active']}
 • Picking: {summary_stats['picking']}
+• Delivering: {summary_stats.get('delivering', 0)}
 • Completed: {summary_stats['completed']}
 
 Timestep: {timestep}/{self.max_timestep-1}
@@ -600,6 +720,7 @@ Grid: {self.grid_width}x{self.grid_height}
 ROBOT STATUS:
 Active: {summary_stats['active']}
 Picking: {summary_stats['picking']}
+Delivering: {summary_stats.get('delivering', 0)}
 Completed: {summary_stats['completed']}
 
 PROGRESS:
@@ -609,6 +730,7 @@ Progress: {timestep/self.max_timestep*100:.1f}%
 WAREHOUSE:
 Shelves: {self.warehouse_stats['shelves']}
 Endpoints: {self.warehouse_stats['endpoints']}
+Stations: {self.warehouse_stats.get('workstations', 0)}
 
 Top 8 Robots:
 {chr(10).join(robot_status[:8])}"""

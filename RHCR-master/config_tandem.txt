@@ -1,0 +1,14 @@
+map=kiva_tandem_4zone.map
+agents=50
+team_size=50
+simulation_time=100
+planning_window=5
+potential_function=NONE
+potential_threshold=0
+capacity_mode=1
+default_agent_capacity=4
+task_delay=0
+randomize_sequences=1
+seed=0
+output=tandem_50_test.csv
+log=tandem_50_test.log

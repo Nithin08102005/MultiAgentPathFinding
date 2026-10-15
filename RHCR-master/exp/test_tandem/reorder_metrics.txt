@@ -1,0 +1,5 @@
+reorder_mode,2
+total_reorder_calls,1000
+total_reorder_pure_time_sec,0.0398069
+avg_reorder_time_ms,0.0398069
+avg_reorder_time_us,39.8069
