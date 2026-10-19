@@ -159,13 +159,22 @@ cmake --build . --config Release
 ### 2. Run Lifelong Simulation Benchmark
 Execute the 28-robot capacitated multi-goal outbound benchmark on the 4-zone warehouse map:
 ```bash
-./lifelong -m maps/kiva_4zone_shaved.map \
-           -k 28 \
-           --scenario=KIVA \
-           --simulation_window=5 \
-           --planning_window=10 \
-           --solver=PBS \
-           --seed=0
+.\build\Release\lifelong.exe --scenario KIVA `
+  --map kiva_4zone_shaved.map `
+  --agentNum 28 `
+  --solver PBS `
+  --simulation_time 750 `
+  --simulation_window 5 `
+  --planning_window 20 `
+  --rotation 1 `
+  --cutoffTime 60 `
+  --task_delay 7 `
+  --capacity_mode 1 `
+  --capacity 7 `
+  --safety_mode 1 `
+  --reorder_mode 2 `
+  --seed 0 `
+  --output .\exp\bench_outbound_39row.2
 ```
 
 ### 3. Launch the Fleet Visualizer
