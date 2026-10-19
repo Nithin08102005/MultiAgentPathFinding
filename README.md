@@ -1,4 +1,4 @@
-# Capacitated Multi-Goal Multi-Agent Pathfinding (C-MG-MAPF) with Bi-Level Optimization & Large Physical Footprints
+#  Capacitated Multi-Goal Multi-Agent Pathfinding (C-MG-MAPF) with Bi-Level Optimization & Large Physical Footprints
 
 [![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg?style=flat&logo=c%2B%2B)](https://en.cppreference.com/w/cpp/17)
 [![Boost](https://img.shields.io/badge/Boost-1.74%2B-orange.svg?style=flat&logo=boost)](https://www.boost.org/)
