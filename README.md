@@ -4,7 +4,6 @@
 [![Boost](https://img.shields.io/badge/Boost-1.74%2B-orange.svg?style=flat&logo=boost)](https://www.boost.org/)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-green.svg?style=flat&logo=python)](https://www.python.org/)
 [![MILP](https://img.shields.io/badge/Solver-COIN--OR%20CBC-red.svg?style=flat)](https://github.com/coin-or/Cbc)
-[![License](https://img.shields.io/badge/License-USC%20Research-lightgrey.svg)](license.md)
 
 An enterprise-grade, high-throughput autonomous mobile robot (AGV) fleet routing engine designed for industrial fulfillment centers (e.g., Amazon Kiva, Ocado, Alibaba). 
 
@@ -195,5 +194,3 @@ This implementation builds upon and significantly extends the foundational resea
 
 ---
 
-## License
-This project is released under the **USC Research License**. See [license.md](RHCR-master/license.md) for full terms and conditions.
