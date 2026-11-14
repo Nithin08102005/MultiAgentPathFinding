@@ -1,0 +1,785 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MAPF Kiva Warehouse Simulator | IIT Indore BTP</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:#080c16;color:#e2e8f0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,Cantarell,sans-serif;min-height:100vh;display:flex;flex-direction:column;overflow-x:hidden;}
+
+/* ── Header ── */
+header{background:#0e1626;border-bottom:1px solid #1a2744;padding:12px 24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;}
+.hdr-brand{display:flex;align-items:center;gap:12px;}
+.hdr-logo{font-size:1.6rem;background:#1e293b;padding:6px 10px;border-radius:8px;border:1px solid #334155;}
+.hdr-title{font-size:1.15rem;font-weight:700;color:#38bdf8;letter-spacing:-0.02em;}
+.hdr-sub{font-size:0.75rem;color:#64748b;margin-top:2px;}
+.badge-pill{font-size:0.7rem;padding:3px 9px;border-radius:999px;font-weight:600;}
+.badge-blue{background:rgba(56,189,248,0.12);color:#38bdf8;border:1px solid rgba(56,189,248,0.3);}
+
+/* ── Layout ── */
+.app{display:flex;flex:1;min-height:calc(100vh - 65px);}
+.sidebar{width:300px;min-width:300px;background:#0c1322;border-right:1px solid #1a2744;padding:18px 16px;display:flex;flex-direction:column;gap:13px;overflow-y:auto;}
+.main{flex:1;padding:16px 20px;display:flex;flex-direction:column;gap:12px;background:#080c16;overflow-y:auto;}
+
+/* ── Form Controls ── */
+.control-group{display:flex;flex-direction:column;gap:5px;}
+.section-label{font-size:0.68rem;text-transform:uppercase;letter-spacing:.08em;font-weight:700;color:#64748b;}
+select,input[type=number]{width:100%;background:#141e33;color:#e2e8f0;border:1px solid #233557;border-radius:6px;padding:8px 10px;font-size:0.85rem;outline:none;transition:border-color .15s;}
+select:focus,input:focus{border-color:#38bdf8;}
+.run-btn{background:linear-gradient(135deg,#0284c7,#2563eb);color:#fff;border:none;border-radius:8px;padding:12px;font-size:0.95rem;font-weight:700;cursor:pointer;width:100%;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 4px 14px rgba(2,132,199,0.3);}
+.run-btn:hover{background:linear-gradient(135deg,#0369a1,#1d4ed8);transform:translateY(-1px);}
+.run-btn:disabled{background:#1a2744;color:#475569;box-shadow:none;cursor:not-allowed;transform:none;}
+
+/* ── Checkboxes ── */
+.checkbox-list{display:flex;flex-direction:column;gap:6px;font-size:0.78rem;color:#94a3b8;}
+.checkbox-item{display:flex;align-items:center;gap:8px;cursor:pointer;}
+.checkbox-item input{accent-color:#0284c7;cursor:pointer;}
+
+/* ── Stats Bar ── */
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;}
+.stat-card{background:#0e1626;border:1px solid #1a2744;border-radius:8px;padding:8px 12px;}
+.stat-val{font-size:1.25rem;font-weight:700;color:#38bdf8;font-variant-numeric:tabular-nums;}
+.stat-lbl{font-size:0.65rem;text-transform:uppercase;color:#64748b;font-weight:600;margin-top:2px;}
+
+/* ── Playback Toolbar ── */
+.toolbar{background:#0e1626;border:1px solid #1a2744;border-radius:8px;padding:10px 14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+.btn-tb{background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:6px;padding:6px 14px;font-size:0.82rem;font-weight:600;cursor:pointer;transition:all .15s;}
+.btn-tb:hover{background:#334155;}
+.btn-tb.primary{background:#0284c7;border-color:#0369a1;color:#fff;}
+.btn-tb.primary:hover{background:#0369a1;}
+.btn-tb.danger{background:#b91c1c;border-color:#991b1b;color:#fff;}
+.btn-tb.danger:hover{background:#991b1b;}
+.timeline-wrap{flex:1;display:flex;align-items:center;gap:10px;min-width:180px;}
+.timeline-slider{flex:1;accent-color:#38bdf8;cursor:pointer;}
+.speed-wrap{display:flex;align-items:center;gap:6px;font-size:0.78rem;color:#94a3b8;}
+
+/* ── Canvas Box ── */
+.canvas-container{background:#050811;border:1px solid #1a2744;border-radius:10px;overflow:auto;display:flex;align-items:center;justify-content:center;position:relative;min-height:440px;flex:1;}
+#canvas{display:none;background:#050811;box-shadow:0 0 30px rgba(0,0,0,0.6);}
+.placeholder{text-align:center;color:#475569;display:flex;flex-direction:column;align-items:center;gap:12px;}
+.placeholder svg{opacity:0.25;}
+
+/* ── Legend ── */
+.legend-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px;}
+.leg-item{display:flex;align-items:center;gap:6px;font-size:0.72rem;color:#94a3b8;}
+.leg-box{width:12px;height:12px;border-radius:3px;flex-shrink:0;}
+
+/* ── Alerts & Spinner ── */
+.alert-box{padding:10px 14px;border-radius:6px;font-size:0.83rem;display:flex;align-items:center;gap:10px;}
+.alert-box.info{background:#0c1a2e;border:1px solid #1e3a5f;color:#7dd3fc;}
+.alert-box.error{background:#2a0d11;border:1px solid #5c1d24;color:#fca5a5;}
+.alert-box.success{background:#092116;border:1px solid #164e32;color:#86efac;}
+@keyframes spin{to{transform:rotate(360deg);}}
+.spinner{width:15px;height:15px;border:2px solid #334155;border-top-color:#38bdf8;border-radius:50%;animation:spin .65s linear infinite;flex-shrink:0;}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="hdr-brand">
+    <div class="hdr-logo">🏭</div>
+    <div>
+      <div class="hdr-title">MAPF Kiva Warehouse Live Visualizer</div>
+      <div class="hdr-sub">Bi-Level PBS+SIPP · 3-Cell Physical Rotations · Space-Time 2-Opt · Capacity Reordering</div>
+    </div>
+  </div>
+  <div style="display:flex;gap:8px;">
+    <span class="badge-pill badge-blue">IIT Indore BTP</span>
+    <span class="badge-pill badge-blue" id="simStatus">Ready</span>
+  </div>
+</header>
+
+<div class="app">
+
+  <!-- ── Sidebar Configuration ── -->
+  <aside class="sidebar">
+
+    <div class="control-group">
+      <div class="section-label">Warehouse Map</div>
+      <select id="mapSel">
+        <option value="kiva_4zone_shaved.map" selected>Kiva 4-Zone Shaved (35×57)</option>
+        <option value="kiva_shaved.map">Kiva Shaved (35×57)</option>
+        <option value="kiva.map">Kiva Full Benchmark (35×57)</option>
+      </select>
+    </div>
+
+    <div class="control-group">
+      <div class="section-label">Number of Robots</div>
+      <select id="agentSel">
+        <option value="4">4 Robots (Fastest)</option>
+        <option value="8" selected>8 Robots (Balanced)</option>
+        <option value="12">12 Robots</option>
+        <option value="16">16 Robots (Standard BTP)</option>
+        <option value="20">20 Robots</option>
+        <option value="24">24 Robots (High Density)</option>
+      </select>
+    </div>
+
+    <div class="control-group">
+      <div class="section-label">Reordering Algorithm</div>
+      <select id="algoSel">
+        <option value="2" selected>Space-Time Fast 2-Opt (Our Novel Method)</option>
+        <option value="0">FIFO Baseline (No Reordering)</option>
+        <option value="1">Nearest-Neighbour Heuristic</option>
+        <option value="3">Held-Karp (Exact Dynamic Prog.)</option>
+      </select>
+    </div>
+
+    <div class="control-group">
+      <div class="section-label">Physical Rotation (Turns)</div>
+      <select id="rotSel">
+        <option value="1" selected>Enabled (3×1 Footprint & Physical Turns)</option>
+        <option value="0">Disabled (1×1 Point Robots)</option>
+      </select>
+    </div>
+
+    <div class="control-group">
+      <div class="section-label">Robot Capacity</div>
+      <select id="capSel">
+        <option value="7" selected>7 Tasks per trip</option>
+        <option value="3">3 Tasks per trip</option>
+      </select>
+    </div>
+
+    <div class="control-group">
+      <div class="section-label">Simulation Timesteps</div>
+      <select id="timeSel">
+        <option value="100" selected>100 steps (~3s simulation)</option>
+        <option value="200">200 steps (~6s simulation)</option>
+        <option value="300">300 steps (~10s simulation)</option>
+        <option value="500">500 steps (~20s simulation)</option>
+        <option value="1000">1000 steps (Full benchmark ~35s)</option>
+      </select>
+    </div>
+
+    <button class="run-btn" id="runBtn" onclick="runSim()">
+      ▶ Run Simulation
+    </button>
+
+    <div class="control-group" style="margin-top:6px;">
+      <div class="section-label">Display Options</div>
+      <div class="checkbox-list">
+        <label class="checkbox-item">
+          <input type="checkbox" id="chkBadges" checked onchange="forceRedraw()">
+          <span>Dynamic Target Tags (R0 → Target)</span>
+        </label>
+        <label class="checkbox-item">
+          <input type="checkbox" id="chkTrails" checked onchange="forceRedraw()">
+          <span>Motion Trails</span>
+        </label>
+        <label class="checkbox-item">
+          <input type="checkbox" id="chkRotHighlight" checked onchange="forceRedraw()">
+          <span>Highlight Turns & Dwelling (Gold)</span>
+        </label>
+      </div>
+      <div style="margin-top:8px;">
+        <div class="section-label">Robot Footprint Style</div>
+        <select id="fpStyleSel" onchange="forceRedraw()">
+          <option value="solid" selected>3×1 Solid Robotic Body (BTP Spec)</option>
+          <option value="ghost">Core AGV + Ghost 3-Cell Buffer</option>
+          <option value="compact">1×1 Compact Core Only</option>
+        </select>
+      </div>
+    </div>
+
+    <div style="margin-top:auto;padding-top:10px;border-top:1px solid #1a2744;">
+      <div class="section-label" style="margin-bottom:8px;">Map Elements</div>
+      <div class="legend-grid">
+        <div class="leg-item"><div class="leg-box" style="background:#78350f"></div>Shelf / Rack</div>
+        <div class="leg-item"><div class="leg-box" style="background:#09121f;border:1px solid #1e293b"></div>Travel Aisle</div>
+        <div class="leg-item"><div class="leg-box" style="background:#172554"></div>Endpoint / Station</div>
+        <div class="leg-item"><div class="leg-box" style="background:#ef4444"></div>Zone 1 Robot</div>
+        <div class="leg-item"><div class="leg-box" style="background:#3b82f6"></div>Zone 2 Robot</div>
+        <div class="leg-item"><div class="leg-box" style="background:#10b981"></div>Zone 3 Robot</div>
+        <div class="leg-item"><div class="leg-box" style="background:#8b5cf6"></div>Zone 4 Robot</div>
+        <div class="leg-item"><div class="leg-box" style="background:#ffd600"></div>Turning / Picking</div>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- ── Main Workspace ── -->
+  <main class="main">
+
+    <!-- Status Alert -->
+    <div id="alertBox" class="alert-box info" style="display:none;"></div>
+
+    <!-- Live Performance Metrics -->
+    <div class="stats-grid" id="statsGrid" style="display:none;">
+      <div class="stat-card">
+        <div class="stat-val" id="stTasks">—</div>
+        <div class="stat-lbl">Tasks Done</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-val" id="stTput">—</div>
+        <div class="stat-lbl">Throughput (T/step)</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-val" id="stRobots">—</div>
+        <div class="stat-lbl">Active Robots</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-val" id="stAlgo">—</div>
+        <div class="stat-lbl">Algorithm</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-val" id="stStep">0</div>
+        <div class="stat-lbl">Current Step</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-val" id="stPicking">0</div>
+        <div class="stat-lbl">Robots Picking</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-val" id="stCollisions" style="color:#22c55e;font-size:1.05rem;">0 (Safe)</div>
+        <div class="stat-lbl">Footprint Collisions</div>
+      </div>
+    </div>
+
+    <!-- Playback Toolbar -->
+    <div class="toolbar" id="toolbar" style="display:none;">
+      <button class="btn-tb primary" id="playBtn" onclick="togglePlay()">▶ Play</button>
+      <button class="btn-tb" onclick="stepDelta(-1)">⏮ -1</button>
+      <button class="btn-tb" onclick="stepDelta(+1)">+1 ⏭</button>
+      <button class="btn-tb" onclick="resetSim()">⟳ Reset</button>
+
+      <div class="timeline-wrap">
+        <span style="font-size:0.75rem;color:#64748b;font-weight:600;" id="lblStepStart">0</span>
+        <input type="range" class="timeline-slider" id="scrubber" min="0" max="100" value="0" oninput="onScrub(this.value)">
+        <span style="font-size:0.75rem;color:#64748b;font-weight:600;" id="lblStepMax">100</span>
+      </div>
+
+      <div class="speed-wrap">
+        <span>Speed:</span>
+        <input type="range" id="speedSlider" min="1" max="30" value="8" style="width:70px;accent-color:#38bdf8;" oninput="onSpeedChange(this.value)">
+        <span id="speedVal" style="font-weight:700;color:#38bdf8;">8</span>fps
+      </div>
+    </div>
+
+    <!-- Canvas Animation Area -->
+    <div class="canvas-container" id="canvasBox">
+      <div class="placeholder" id="placeholder">
+        <svg width="68" height="68" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2">
+          <rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
+        </svg>
+        <div style="font-weight:600;font-size:0.95rem;color:#94a3b8;">Kiva Warehouse Simulation Ready</div>
+        <div style="font-size:0.78rem;color:#64748b;">Configure agents and algorithm on the left, then click <b>Run Simulation</b></div>
+      </div>
+      <canvas id="canvas"></canvas>
+    </div>
+
+  </main>
+</div>
+
+<script>
+// ── Global State ──────────────────────────────────────────────────────────
+var SIM = null;           // Server data: { paths, tasks, map, stats }
+var frameT = 0;           // Floating timestep progress
+var playing = false;
+var rafId = null;
+var lastTs = null;
+var speed = 8;            // Steps per second
+var CELL = 15;            // Canvas cell size in pixels
+var maxStep = 0;
+var mapCanvas = null;     // Pre-rendered offscreen map
+
+var ZONE_COLORS = [
+  '#ef4444', // Red (Zone 1)
+  '#3b82f6', // Blue (Zone 2)
+  '#10b981', // Green (Zone 3)
+  '#8b5cf6', // Purple (Zone 4)
+  '#f59e0b', // Amber
+  '#ec4899', // Pink
+  '#06b6d4', // Cyan
+  '#84cc16'  // Lime
+];
+
+// ── Execute Simulation ───────────────────────────────────────────────────
+function runSim(){
+  var mapName  = document.getElementById('mapSel').value;
+  var agents   = parseInt(document.getElementById('agentSel').value);
+  var algo     = parseInt(document.getElementById('algoSel').value);
+  var rotation = parseInt(document.getElementById('rotSel').value);
+  var capacity = parseInt(document.getElementById('capSel').value);
+  var simTime  = parseInt(document.getElementById('timeSel').value);
+
+  var btn = document.getElementById('runBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner"></div> Simulating…';
+  document.getElementById('simStatus').textContent = 'Solving PBS+SIPP…';
+
+  showAlert('info', '⏳ Running Bi-Level PBS+SIPP solver with ' + agents + ' robots & Space-Time reordering…');
+
+  fetch('/run', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      map: mapName,
+      agents: agents,
+      algorithm: algo,
+      rotation: rotation,
+      capacity: capacity,
+      sim_time: simTime
+    })
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(data){
+    btn.disabled = false;
+    btn.innerHTML = '▶ Run Simulation';
+    document.getElementById('simStatus').textContent = 'Complete';
+
+    if(data.error){
+      showAlert('error', '❌ Simulation failed: ' + data.error);
+      return;
+    }
+
+    SIM = data;
+    showAlert('success', '✅ Simulation finished! Total ' + data.stats.tasks_completed + ' tasks completed (Throughput: ' + (data.stats.throughput ? data.stats.throughput.toFixed(3) : '—') + ' tasks/step)');
+    setupSimulation(data);
+  })
+  .catch(function(err){
+    btn.disabled = false;
+    btn.innerHTML = '▶ Run Simulation';
+    document.getElementById('simStatus').textContent = 'Error';
+    showAlert('error', '❌ Server request failed: ' + err.message);
+  });
+}
+
+// ── Setup Simulation & Canvas ─────────────────────────────────────────────
+function setupSimulation(data){
+  var paths = data.paths;
+  var mapData = data.map;
+  var H = mapData.H, W = mapData.W;
+
+  // Compute maximum steps across all agents
+  var lengths = Object.values(paths.agents).map(function(p){ return p.length; });
+  maxStep = Math.max.apply(null, lengths) - 1;
+  frameT = 0;
+
+  // Setup scrubber
+  var scrubber = document.getElementById('scrubber');
+  scrubber.min = 0;
+  scrubber.max = maxStep;
+  scrubber.value = 0;
+  document.getElementById('lblStepMax').textContent = maxStep;
+
+  // Display stats
+  document.getElementById('stTasks').textContent = data.stats.tasks_completed;
+  document.getElementById('stTput').textContent = data.stats.throughput ? data.stats.throughput.toFixed(3) : '—';
+  document.getElementById('stRobots').textContent = data.stats.agents;
+  document.getElementById('stAlgo').textContent = (data.stats.algorithm || '—').replace('Space-Time ', '');
+  document.getElementById('statsGrid').style.display = 'grid';
+  document.getElementById('toolbar').style.display = 'flex';
+
+  // Sizing Canvas
+  var container = document.getElementById('canvasBox');
+  var availW = Math.max(600, container.clientWidth - 40);
+  CELL = Math.floor(availW / W);
+  CELL = Math.max(10, Math.min(18, CELL));
+
+  var canvas = document.getElementById('canvas');
+  canvas.width = W * CELL;
+  canvas.height = H * CELL;
+  canvas.style.display = 'block';
+  document.getElementById('placeholder').style.display = 'none';
+
+  // Pre-render the static warehouse grid onto offscreen buffer
+  mapCanvas = document.createElement('canvas');
+  mapCanvas.width = canvas.width;
+  mapCanvas.height = canvas.height;
+  var mctx = mapCanvas.getContext('2d');
+
+  for(var r=0; r<H; r++){
+    for(var c=0; c<W; c++){
+      var cell = mapData.grid[r][c];
+      if(cell === 1){
+        // Shelf rack (Brown/Amber)
+        mctx.fillStyle = '#78350f';
+        mctx.fillRect(c*CELL, r*CELL, CELL, CELL);
+        mctx.fillStyle = '#92400e';
+        mctx.fillRect(c*CELL+1, r*CELL+1, CELL-2, CELL-2);
+      } else if(cell === 2){
+        // Station / Endpoint (Deep Blue)
+        mctx.fillStyle = '#1e3a8a';
+        mctx.fillRect(c*CELL, r*CELL, CELL, CELL);
+        mctx.strokeStyle = '#38bdf8';
+        mctx.lineWidth = 0.5;
+        mctx.strokeRect(c*CELL+0.5, r*CELL+0.5, CELL-1, CELL-1);
+      } else {
+        // Travel Aisle (Dark Navy)
+        mctx.fillStyle = '#09121f';
+        mctx.fillRect(c*CELL, r*CELL, CELL, CELL);
+        mctx.strokeStyle = '#142033';
+        mctx.lineWidth = 0.4;
+        mctx.strokeRect(c*CELL+0.5, r*CELL+0.5, CELL-1, CELL-1);
+      }
+    }
+  }
+
+  // Auto-start playback
+  resetSim();
+  togglePlay();
+}
+
+// ── Frame Rendering (Interpolation, 3x1 Body, Turns, Badges) ─────────────
+function render(t){
+  if(!SIM || !mapCanvas) return;
+  var canvas = document.getElementById('canvas');
+  var ctx = canvas.getContext('2d');
+
+  // 1. Draw static warehouse map from cached buffer
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(mapCanvas, 0, 0);
+
+  var paths = SIM.paths;
+  var tasks = SIM.tasks || {};
+  var mapData = SIM.map;
+  var H = mapData.H, W = mapData.W;
+  var tInt = Math.floor(t);
+  var tFrac = t - tInt;
+
+  var showBadges = document.getElementById('chkBadges').checked;
+  var showTrails = document.getElementById('chkTrails').checked;
+  var showHighlights = document.getElementById('chkRotHighlight').checked;
+
+  var pickingCount = 0;
+
+  // 2. Render each robot
+  for(var a = 0; a < paths.num_agents; a++){
+    var path = paths.agents[String(a)];
+    if(!path || path.length === 0) continue;
+
+    var curr = (tInt < path.length) ? path[tInt] : path[path.length - 1];
+    var next = (tInt + 1 < path.length) ? path[tInt + 1] : curr;
+
+    // Sub-step interpolated position
+    var px = (curr.x + (next.x - curr.x) * tFrac) * CELL + CELL / 2;
+    var py = (curr.y + (next.y - curr.y) * tFrac) * CELL + CELL / 2;
+
+    var isMoving = (curr.x !== next.x || curr.y !== next.y);
+    var isTurning = (curr.o !== next.o && curr.o !== -1 && next.o !== -1);
+    var color = ZONE_COLORS[a % ZONE_COLORS.length];
+
+    // Check task status
+    var agentTasks = tasks[String(a)] || [];
+    var currentTarget = null;
+    var completedTasks = 0;
+
+    for(var k = 0; k < agentTasks.length; k++){
+      var tsk = agentTasks[k];
+      if(tsk.finish_time >= 0 && tsk.finish_time <= tInt){
+        completedTasks++;
+      } else if(!currentTarget && (tsk.finish_time > tInt || tsk.finish_time < 0)){
+        currentTarget = tsk;
+      }
+    }
+
+    var cellType = (mapData.grid[curr.y] && mapData.grid[curr.y][curr.x]) ? mapData.grid[curr.y][curr.x] : 0;
+    var isPicking = (cellType === 2) || (currentTarget && currentTarget.x === curr.x && currentTarget.y === curr.y && !isMoving);
+    if(isPicking) pickingCount++;
+
+    // ── A. Motion Trail ──
+    if(showTrails && tInt > 0){
+      var trailLen = 8;
+      var trailStart = Math.max(0, tInt - trailLen);
+      ctx.beginPath();
+      for(var ti = trailStart; ti <= tInt; ti++){
+        var tp = (ti < path.length) ? path[ti] : path[path.length - 1];
+        var tx = tp.x * CELL + CELL / 2;
+        var ty = tp.y * CELL + CELL / 2;
+        if(ti === trailStart) ctx.moveTo(tx, ty); else ctx.lineTo(tx, ty);
+      }
+      ctx.lineTo(px, py);
+      ctx.strokeStyle = color + '44';
+      ctx.lineWidth = Math.max(1.5, CELL * 0.16);
+      ctx.lineCap = 'round';
+      ctx.stroke();
+    }
+
+    // ── B. Orientation & Physical Rotation ──
+    // Orientation: 0=East, 1=North, 2=West, 3=South
+    var orientCurr = curr.o;
+    var orientNext = next.o;
+    var hasOrient = (orientCurr !== -1);
+    var angleDeg = 0;
+
+    if(hasOrient){
+      var angleCurr = orientCurr * 90;
+      var angleNext = (orientNext !== -1) ? orientNext * 90 : angleCurr;
+      var angleDiff = ((angleNext - angleCurr + 180 + 360) % 360) - 180;
+      angleDeg = angleCurr + angleDiff * tFrac;
+    } else if(isMoving){
+      // Infer orientation from movement vector if no rotation data
+      var dx = next.x - curr.x;
+      var dy = next.y - curr.y;
+      angleDeg = - (Math.atan2(-dy, dx) * 180 / Math.PI);
+      hasOrient = true;
+    }
+
+    // ── C. Robot Body & Footprint ──
+    var fpStyle = document.getElementById('fpStyleSel') ? document.getElementById('fpStyleSel').value : 'solid';
+    var is3CellMode = (SIM && SIM.stats && SIM.stats.rotation && orientCurr !== -1);
+
+    ctx.save();
+    ctx.translate(px, py);
+
+    if(hasOrient){
+      // Canvas rotation: North is -y, so East(0°) -> North(-90°) is counter-clockwise (-angle)
+      ctx.rotate(-angleDeg * Math.PI / 180);
+    }
+
+    // Highlight border: Gold (#ffd600) when turning in-place or picking, dark border when moving
+    var borderColor = '#000000';
+    var borderWidth = 1.2;
+    if(showHighlights && (isTurning || isPicking || !isMoving)){
+      borderColor = '#ffd600';
+      borderWidth = 2.0;
+    }
+
+    if(is3CellMode && fpStyle === 'solid'){
+      // 3x1 Full Solid Robotic Chassis (3 cells long)
+      var rw = CELL * 2.82;
+      var rh = CELL * 0.86;
+
+      ctx.fillStyle = color;
+      ctx.strokeStyle = borderColor;
+      ctx.lineWidth = borderWidth;
+      ctx.beginPath();
+      ctx.roundRect(-rw/2, -rh/2, rw, rh, 3);
+      ctx.fill();
+      ctx.stroke();
+
+      // Wheel tracks on sides
+      ctx.fillStyle = '#0a0f1d';
+      ctx.fillRect(-rw/3, -rh/2 - 1, rw*0.66, 2);
+      ctx.fillRect(-rw/3,  rh/2 - 1, rw*0.66, 2);
+
+      // Front directional cab / arrow
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.beginPath();
+      ctx.moveTo(rw/2 - 2, 0);
+      ctx.lineTo(rw/2 - 6, -3);
+      ctx.lineTo(rw/2 - 6, 3);
+      ctx.closePath();
+      ctx.fill();
+
+      // Center shelf tray outline
+      ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+      ctx.lineWidth = 0.8;
+      ctx.strokeRect(-CELL*0.35, -CELL*0.35, CELL*0.7, CELL*0.7);
+
+    } else if(is3CellMode && fpStyle === 'ghost'){
+      // Core 1x1 AGV + Ghost 3-Cell Safety Footprint
+      var cw = CELL * 0.86;
+      // Front and rear ghost buffers
+      ctx.fillStyle = color + '35';
+      ctx.strokeStyle = color + '66';
+      ctx.lineWidth = 0.8;
+      ctx.fillRect(-CELL * 1.4, -cw/2, CELL * 0.9, cw);
+      ctx.strokeRect(-CELL * 1.4, -cw/2, CELL * 0.9, cw);
+      ctx.fillRect(CELL * 0.5, -cw/2, CELL * 0.9, cw);
+      ctx.strokeRect(CELL * 0.5, -cw/2, CELL * 0.9, cw);
+
+      // Center Core AGV
+      ctx.fillStyle = color;
+      ctx.strokeStyle = borderColor;
+      ctx.lineWidth = borderWidth;
+      ctx.beginPath();
+      ctx.roundRect(-cw/2, -cw/2, cw, cw, 3);
+      ctx.fill();
+      ctx.stroke();
+
+      // Direction indicator
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.beginPath();
+      ctx.moveTo(cw/2 - 1, 0);
+      ctx.lineTo(cw/2 - 5, -3);
+      ctx.lineTo(cw/2 - 5, 3);
+      ctx.closePath();
+      ctx.fill();
+
+    } else {
+      // 1x1 Compact Core (never exceeds cell boundary)
+      var cw = CELL * 0.86;
+      ctx.fillStyle = color;
+      ctx.strokeStyle = borderColor;
+      ctx.lineWidth = borderWidth;
+      ctx.beginPath();
+      ctx.roundRect(-cw/2, -cw/2, cw, cw, 3);
+      ctx.fill();
+      ctx.stroke();
+
+      if(hasOrient){
+        ctx.fillStyle = 'rgba(255,255,255,0.85)';
+        ctx.beginPath();
+        ctx.moveTo(cw/2 - 1, 0);
+        ctx.lineTo(cw/2 - 5, -3);
+        ctx.lineTo(cw/2 - 5, 3);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+
+    ctx.restore();
+
+    // ── D. Robot ID Text (Upright) ──
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold ' + Math.max(7, Math.floor(CELL * 0.46)) + 'px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('R' + a, px, py);
+
+    // ── E. Dynamic Floating Target Tag & Picking Star ──
+    if(isPicking){
+      // Glowing star at station
+      ctx.fillStyle = '#ffd600';
+      ctx.font = Math.max(10, CELL * 0.75) + 'px serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('★', px, py - CELL * 1.1);
+    }
+
+    if(showBadges && CELL >= 11){
+      var tagText = isPicking ? ('R' + a + ' [PICK]') : ('R' + a + ' [' + completedTasks + ']');
+      if(currentTarget && !isPicking){
+        tagText = 'R' + a + '→(' + currentTarget.x + ',' + currentTarget.y + ') [' + completedTasks + ']';
+      }
+
+      ctx.font = 'bold 7.5px sans-serif';
+      var textMetrics = ctx.measureText(tagText);
+      var tagW = textMetrics.width + 6;
+      var tagH = 11;
+      var tagY = py - CELL * 0.95;
+
+      ctx.fillStyle = 'rgba(10, 15, 29, 0.88)';
+      ctx.strokeStyle = isPicking ? '#ffd600' : color;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(px - tagW/2, tagY - tagH/2, tagW, tagH, 3);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(tagText, px, tagY);
+    }
+  }
+
+  // 3. Real-time Footprint Collision Verification
+  var moveMap = {0: 1, 1: -W, 2: -1, 3: W};
+  var occCells = {};
+  var collisions = 0;
+  for(var a = 0; a < paths.num_agents; a++){
+    var p = paths.agents[String(a)];
+    if(!p || tInt >= p.length) continue;
+    var st = p[tInt];
+    var loc = st.y * W + st.x;
+    var cells = [loc];
+    if(SIM.stats && SIM.stats.rotation && st.o in moveMap){
+      cells.push(loc + moveMap[st.o]);
+      cells.push(loc - moveMap[st.o]);
+    }
+    for(var ci = 0; ci < cells.length; ci++){
+      var cId = cells[ci];
+      if(occCells[cId] !== undefined && occCells[cId] !== a){
+        collisions++;
+      }
+      occCells[cId] = a;
+    }
+  }
+
+  var collEl = document.getElementById('stCollisions');
+  if(collEl){
+    if(collisions === 0){
+      collEl.textContent = '0 (Safe)';
+      collEl.style.color = '#22c55e';
+    } else {
+      collEl.textContent = collisions + ' OVERLAP!';
+      collEl.style.color = '#ef4444';
+    }
+  }
+
+  // 4. Update dashboard UI
+  document.getElementById('stStep').textContent = tInt;
+  document.getElementById('stPicking').textContent = pickingCount;
+  document.getElementById('scrubber').value = tInt;
+}
+
+// ── Playback Loop ─────────────────────────────────────────────────────────
+function loop(ts){
+  if(!playing) return;
+  if(lastTs === null) lastTs = ts;
+  var dt = (ts - lastTs) / 1000;
+  lastTs = ts;
+
+  frameT += dt * speed;
+  if(frameT > maxStep){
+    frameT = 0; // Loop animation
+  }
+
+  render(frameT);
+  rafId = requestAnimationFrame(loop);
+}
+
+function togglePlay(){
+  playing = !playing;
+  var btn = document.getElementById('playBtn');
+  if(playing){
+    btn.textContent = '⏸ Pause';
+    btn.className = 'btn-tb danger';
+    lastTs = null;
+    rafId = requestAnimationFrame(loop);
+  } else {
+    btn.textContent = '▶ Play';
+    btn.className = 'btn-tb primary';
+    if(rafId) cancelAnimationFrame(rafId);
+  }
+}
+
+function resetSim(){
+  if(playing) togglePlay();
+  frameT = 0;
+  render(0);
+}
+
+function stepDelta(delta){
+  if(playing) togglePlay();
+  frameT = Math.max(0, Math.min(maxStep, Math.floor(frameT) + delta));
+  render(frameT);
+}
+
+function onScrub(val){
+  if(playing) togglePlay();
+  frameT = parseInt(val);
+  render(frameT);
+}
+
+function onSpeedChange(val){
+  speed = parseInt(val);
+  document.getElementById('speedVal').textContent = speed;
+}
+
+function forceRedraw(){
+  render(frameT);
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+function showAlert(type, msg){
+  var b = document.getElementById('alertBox');
+  b.className = 'alert-box ' + type;
+  b.style.display = 'flex';
+  b.innerHTML = (type === 'info') ? ('<div class="spinner"></div><span>' + msg + '</span>') : msg;
+}
+
+// Keyboard shortcut: Spacebar toggles Play/Pause
+window.addEventListener('keydown', function(e){
+  if(e.code === 'Space' && e.target.tagName !== 'INPUT' && e.target.tagName !== 'SELECT'){
+    e.preventDefault();
+    togglePlay();
+  }
+});
+</script>
+</body>
+</html>
